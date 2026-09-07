@@ -248,7 +248,7 @@ func PostBulkRemoveByLatency(ctx *gin.Context) {
 
 	// Get current connected servers for this outbound
 	connected := configure.GetConnectedServersByOutbound(data.Outbound)
-	if connected == nil || connected.Num() == 0 {
+	if connected == nil || connected.Len() == 0 {
 		common.ResponseError(ctx, logError("no connected servers in this outbound"))
 		return
 	}
@@ -271,34 +271,37 @@ func PostBulkRemoveByLatency(ctx *gin.Context) {
 			Outbound: data.Outbound,
 		}
 		// Check if this server exceeds threshold or has no latency data
-		server := connected.Get(which)
-		if server == nil {
-			continue
+		// Find matching server in connected list
+		found := false
+		for _, c := range connected.Get() {
+			if c.EqualTo(which) {
+				latencyStr := c.Latency
+				if latencyStr == "" || latencyStr == "-" || latencyStr == "TIMEOUT" {
+					// No latency data (error/timeout) - remove it
+					removeSet[which] = true
+				} else {
+					// Parse latency value (e.g., "123ms")
+					latencyStr = strings.TrimSuffix(latencyStr, "ms")
+					latency, err := strconv.Atoi(latencyStr)
+					if err != nil {
+						// If we can't parse, treat as error - remove it
+						removeSet[which] = true
+					} else if latency >= data.MaxLatencyMs {
+						removeSet[which] = true
+					}
+				}
+				found = true
+				break
+			}
 		}
-		latencyStr := server.PingLatency
-		if latencyStr == "" || latencyStr == "-" {
-			// No latency data (error/timeout) - remove it
-			removeSet[which] = true
-			continue
-		}
-		// Parse latency value (e.g., "123ms")
-		latencyStr = strings.TrimSuffix(latencyStr, "ms")
-		latency, err := strconv.Atoi(latencyStr)
-		if err != nil {
-			// If we can't parse, treat as error - remove it
-			removeSet[which] = true
-			continue
-		}
-		if latency >= data.MaxLatencyMs {
-			removeSet[which] = true
-		}
+		_ = found
 	}
 
 	// Build new list excluding removed servers
 	var remaining []configure.Which
-	for _, w := range connected.Data() {
-		if !removeSet[w] {
-			remaining = append(remaining, w)
+	for _, w := range connected.Get() {
+		if !removeSet[*w] {
+			remaining = append(remaining, *w)
 		}
 	}
 
