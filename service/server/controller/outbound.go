@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -198,4 +199,125 @@ func PutOutboundConnections(ctx *gin.Context) {
 		return
 	}
 	getTouch(ctx)
+}
+
+// PostBulkRemoveByLatency removes servers from an outbound group based on latency threshold.
+// Servers with latency >= threshold OR servers without latency data (errors/timeouts) are removed.
+// At least one server must remain in the group after removal.
+func PostBulkRemoveByLatency(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() {
+		updatingMu.Lock()
+		updating = false
+		updatingMu.Unlock()
+	}()
+
+	var data struct {
+		Outbound      string `json:"outbound"`
+		MaxLatencyMs  int    `json:"maxLatencyMs"`
+		ServersToCheck []struct {
+			ID        int    `json:"id"`
+			TYPE      string `json:"_type"`
+			TYPEAlias string `json:"type"`
+			Sub       *int   `json:"sub"`
+		} `json:"serversToCheck"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+	if data.Outbound == "" {
+		common.ResponseError(ctx, logError("outbound is required"))
+		return
+	}
+	if data.MaxLatencyMs <= 0 {
+		common.ResponseError(ctx, logError("maxLatencyMs must be positive"))
+		return
+	}
+	if len(data.ServersToCheck) == 0 {
+		common.ResponseError(ctx, logError("no servers to check"))
+		return
+	}
+
+	// Get current connected servers for this outbound
+	connected := configure.GetConnectedServersByOutbound(data.Outbound)
+	if connected == nil || connected.Num() == 0 {
+		common.ResponseError(ctx, logError("no connected servers in this outbound"))
+		return
+	}
+
+	// Build set of servers to remove (those exceeding threshold or with errors)
+	removeSet := make(map[configure.Which]bool)
+	for _, s := range data.ServersToCheck {
+		typ := configure.ServerType
+		if strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(s.TYPE, "_", ""), "-", "")) == "subscriptionserver" {
+			typ = configure.SubscriptionServerType
+		}
+		sub := 0
+		if s.Sub != nil {
+			sub = *s.Sub
+		}
+		which := configure.Which{
+			TYPE:     typ,
+			ID:       s.ID,
+			Sub:      sub,
+			Outbound: data.Outbound,
+		}
+		// Check if this server exceeds threshold or has no latency data
+		server := connected.Get(which)
+		if server == nil {
+			continue
+		}
+		latencyStr := server.PingLatency
+		if latencyStr == "" || latencyStr == "-" {
+			// No latency data (error/timeout) - remove it
+			removeSet[which] = true
+			continue
+		}
+		// Parse latency value (e.g., "123ms")
+		latencyStr = strings.TrimSuffix(latencyStr, "ms")
+		latency, err := strconv.Atoi(latencyStr)
+		if err != nil {
+			// If we can't parse, treat as error - remove it
+			removeSet[which] = true
+			continue
+		}
+		if latency >= data.MaxLatencyMs {
+			removeSet[which] = true
+		}
+	}
+
+	// Build new list excluding removed servers
+	var remaining []configure.Which
+	for _, w := range connected.Data() {
+		if !removeSet[w] {
+			remaining = append(remaining, w)
+		}
+	}
+
+	// Ensure at least one server remains
+	if len(remaining) == 0 {
+		common.ResponseError(ctx, logError("cannot remove all servers from the group; at least one server must remain"))
+		return
+	}
+
+	// Replace connections with remaining servers
+	if err := service.ReplaceOutboundConnections(data.Outbound, remaining); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+
+	// Return summary
+	common.ResponseSuccess(ctx, gin.H{
+		"removedCount": len(removeSet),
+		"remainingCount": len(remaining),
+		"outbound": data.Outbound,
+	})
 }

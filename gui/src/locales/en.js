@@ -517,4 +517,21 @@ export default {
     success: "Successfully added {count} node(s) to {group}",
     alreadyInGroup: "{count} node(s) already in group, duplicates will be skipped",
   },
+  bulkRemoveByLatency: {
+    title: "Bulk Remove Nodes by Latency",
+    button: "Bulk Remove by Latency",
+    messages: [
+      "Remove all nodes with latency above the threshold or with connection errors from a proxy group. Run latency tests first.",
+    ],
+    maxLatency: "Max Latency (ms)",
+    maxLatencyPlaceholder: "e.g. 500",
+    targetGroup: "Target Proxy Group",
+    preview: "{count} node(s) will be removed from {group}",
+    previewNoMatch: "No nodes to remove (all have latency ≤ {threshold}ms)",
+    noLatencyData: "No latency data available. Please run latency tests first.",
+    wouldEmptyGroup: "Warning: This would leave the group empty. At least one server must remain.",
+    confirm: "Bulk Remove",
+    success: "Successfully removed {count} node(s) from {group}",
+    errorTimeout: "Error/Timeout",
+  },
 };

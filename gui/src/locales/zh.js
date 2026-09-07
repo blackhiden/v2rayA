@@ -520,4 +520,21 @@ export default {
     success: "成功添加 {count} 个节点到 {group}",
     alreadyInGroup: "已有 {count} 个节点在分组中，将跳过重复节点",
   },
+  bulkRemoveByLatency: {
+    title: "按时延批量移除节点",
+    button: "按时延批量移除",
+    messages: [
+      "将所有时延高于阈值或连接错误的节点从代理分组中批量移除。请先对节点进行延迟测试。",
+    ],
+    maxLatency: "最大时延（毫秒）",
+    maxLatencyPlaceholder: "例如 500",
+    targetGroup: "目标代理分组",
+    preview: "将从 {group} 移除 {count} 个节点",
+    previewNoMatch: "没有需要移除的节点（所有节点时延 ≤ {threshold}ms）",
+    noLatencyData: "没有可用的时延数据，请先运行延迟测试",
+    wouldEmptyGroup: "警告：这将导致分组为空。至少需要保留一个服务器。",
+    confirm: "批量移除",
+    success: "成功从 {group} 移除 {count} 个节点",
+    errorTimeout: "错误/超时",
+  },
 };
