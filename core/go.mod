@@ -9,11 +9,11 @@ go 1.26
 
 require (
 	anytls v0.0.12
-	github.com/arsydoni4326-alt/xray-core v0.0.0-20260830124736-c0ea488e03e4
 	github.com/daeuniverse/outbound v0.0.0-20250722064253-00c4fbb38759
 	github.com/daeuniverse/softwind v0.0.0-20231230065827-eed67f20d2c1
 	github.com/miekg/dns v1.1.73
 	github.com/sagernet/sing v0.5.1
+	github.com/arsydoni4326-alt/xray-core @main
 	golang.org/x/sys v0.47.0
 	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12
