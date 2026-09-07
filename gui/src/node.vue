@@ -172,6 +172,16 @@
             <i class="iconfont icon-daoruzupu-xianxing" />
             <span>{{ $t("bulkAddByLatency.button") }}</span>
           </b-button>
+          <!-- Bulk Remove: only on SERVER tab (1) and individual subscription tabs (2+) -->
+          <b-button
+            v-if="isBulkRemoveByLatencyAvailable"
+            class="field mobile-small"
+            type="is-danger"
+            @click="handleClickBulkRemoveByLatency"
+          >
+            <i class="iconfont icon-chaizhi" />
+            <span>{{ $t("bulkRemoveByLatency.button") }}</span>
+          </b-button>
         </div>
         <div class="right">
           <b-button
@@ -1043,6 +1053,7 @@ import ModalSubscription from "@/components/modalSubcription";
 import ModalSharing from "@/components/modalSharing";
 import ModalPickProxyGroup from "@/components/modalPickProxyGroup";
 import modalBulkAddByLatency from "@/components/modalBulkAddByLatency";
+import modalBulkRemoveByLatency from "@/components/modalBulkRemoveByLatency";
 import LiveFlowDashboard from "@/components/liveFlowDashboard";
 import { waitingConnected } from "@/assets/js/networkInspect";
 import axios from "@/plugins/axios";
@@ -1128,6 +1139,9 @@ export default {
     isBulkAddByLatencyAvailable() {
       return this.tab === 1 ||
         (this.tab >= 2 && this.tab < this.tableData.subscriptions.length + 2);
+    },
+    isBulkRemoveByLatencyAvailable() {
+      return this.isBulkAddByLatencyAvailable;
     },
   },
   watch: {
@@ -2149,6 +2163,35 @@ export default {
       this.$buefy.modal.open({
         parent: this,
         component: modalBulkAddByLatency,
+        props: modalProps,
+        hasModalCard: true,
+        canCancel: true,
+        events: {
+          done: () => {
+            this.$axios({ url: apiRoot + "/touch" }).then((res) => {
+              if (res.data && res.data.code === "SUCCESS") {
+                this.refreshTableData(res.data.data.touch, res.data.data.running, res.data.data.networkPaused);
+                this.updateConnectView();
+              }
+            });
+          },
+        },
+      });
+    },
+    handleClickBulkRemoveByLatency() {
+      if (!this.isBulkRemoveByLatencyAvailable) {
+        return;
+      }
+      const modalProps = {};
+      if (this.tab === 1) {
+        modalProps.tabType = "server";
+      } else if (this.tab >= 2 && this.tab < this.tableData.subscriptions.length + 2) {
+        modalProps.tabType = "subscription";
+        modalProps.tabIndex = this.tab - 2;
+      }
+      this.$buefy.modal.open({
+        parent: this,
+        component: modalBulkRemoveByLatency,
         props: modalProps,
         hasModalCard: true,
         canCancel: true,

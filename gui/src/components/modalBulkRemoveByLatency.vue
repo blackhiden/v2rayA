@@ -58,9 +58,12 @@
       </b-button>
     </footer>
   </div>
+</template>
+
 <script>
 import axios from "../plugins/axios";
 const apiRoot = process.env.VUE_APP_API_ROOT || "/api";
+
 export default {
   name: "ModalBulkRemoveByLatency",
   props: {
@@ -80,7 +83,10 @@ export default {
   computed: {
     hasLatencyData() {
       if (!this.touchData) return false;
-      return this.getAllServers().some((s) => s.pingLatency && s.pingLatency.endsWith("ms"));
+      return (this.touchData.servers || []).some((s) => s.pingLatency && s.pingLatency.endsWith("ms")) ||
+             (this.touchData.subscriptions || []).some((sub) =>
+               (sub.servers || []).some((s) => s.pingLatency && s.pingLatency.endsWith("ms"))
+             );
     },
     matchingServers() {
       if (!this.touchData) return [];
@@ -88,33 +94,36 @@ export default {
         if (s.disableReason) return false;
         if (!s.pingLatency || !s.pingLatency.endsWith("ms")) {
           return true;
-        }\n        const latency = parseInt(s.pingLatency, 10);
+        }
+        const latency = parseInt(s.pingLatency, 10);
         return !isNaN(latency) && latency >= this.maxLatency;
       });
     },
     serversToRemove() {
-      if (!this.matchingServers.length) return [];
-      const existingInGroup = this.currentConnectedServers
-        .filter((w) => (w.outbound || "proxy") === this.selectedOutbound)
-        .map((w) => `${w._type || w.TYPE}-${w.id || w.ID}-${w.sub || 0}`);
+      if (!this.matchingServers || !this.matchingServers.length) return [];
+      const existingInGroup = (this.currentConnectedServers || []).filter(
+        (w) => (w.outbound || "proxy") === this.selectedOutbound
+      ).map((w) => `${w._type || w.TYPE}-${w.id || w.ID}-${w.sub || 0}`);
 
       return this.matchingServers.map((s) => {
-        const key = `${s._type}-${s.id}-${s.sub || 0}`;
+        const key = `${s._type || s.TYPE}-${s.id || s.ID}-${s.sub || 0}`;
         const isInGroup = existingInGroup.includes(key);
+        const pingLatency = s.pingLatency || "";
         return {
           ...s,
           inGroup: isInGroup,
-          reason: !s.pingLatency || !s.pingLatency.endsWith("ms") ? "error" : "latency",
+          reason: !pingLatency || !pingLatency.endsWith("ms") ? "error" : "latency",
         };
       }).filter((s) => s.inGroup);
     },
     wouldEmptyGroup() {
-      const groupServers = this.currentConnectedServers
-        .filter((w) => (w.outbound || "proxy") === this.selectedOutbound);
-      if (groupServers.length === 0) return false;
+      const groupServers = (this.currentConnectedServers || []).filter(
+        (w) => (w.outbound || "proxy") === this.selectedOutbound
+      );
+      if (!groupServers || groupServers.length === 0) return false;
 
       const serversToRemoveSet = new Set(
-        this.serversToRemove.map((s) => `${s._type}-${s.id}-${s.sub || 0}`)
+        (this.serversToRemove || []).map((s) => `${s._type || s.TYPE}-${s.id || s.ID}-${s.sub || 0}`)
       );
       const remaining = groupServers.filter((w) => {
         const key = `${w._type || w.TYPE}-${w.id || w.ID}-${w.sub || 0}`;
@@ -125,23 +134,23 @@ export default {
   },
   methods: {
     getAllServers() {
+      if (!this.touchData) return [];
       if (this.tabType === "server") {
-        return this.touchData?.server || [];
-      } else if (this.tabType === "subscription" && this.touchData?.subscription) {
-        const subIndex = this.tabIndex;
-        const subscription = this.touchData.subscription[subIndex];
-        if (subscription && subscription.servers) {
-          const servers = subscription.servers.map((s) => {
-            const serverInfo = this.touchData.server?.find(
-              (sa) => sa.id === s.id && sa._type === s._type
-            );
-            return { ...s, pingLatency: serverInfo?.pingLatency || "" };
-          });
-          return servers;
-        }
-      }\n      return this.touchData?.server || [];
+        return (this.touchData.servers || []).map((s) => ({ ...s, _type: "server" }));
+      }
+      if (this.tabType === "subscription" && this.tabIndex >= 0
+          && this.tabIndex < (this.touchData.subscriptions || []).length) {
+        const sub = this.touchData.subscriptions[this.tabIndex];
+        return (sub.servers || []).map((s) => ({ ...s, _type: "subscriptionServer", sub: this.tabIndex }));
+      }
+      const servers = (this.touchData.servers || []).map((s) => ({ ...s, _type: "server" }));
+      const subServers = [];
+      (this.touchData.subscriptions || []).forEach((sub, subIdx) => {
+        (sub.servers || []).forEach((s) => subServers.push({ ...s, _type: "subscriptionServer", sub: subIdx }));
+      });
+      return [...servers, ...subServers];
     },
-    async fetchData() {
+    async fetchTouchData() {
       try {
         const res = await axios({ url: apiRoot + "/outbounds" });
         if (res.data.code === "SUCCESS" && res.data.data.outbounds) {
@@ -149,13 +158,15 @@ export default {
           if (!this.outbounds.includes(this.selectedOutbound)) {
             this.selectedOutbound = this.outbounds[0] || "proxy";
           }
-        }\n      } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
       try {
         const res = await axios({ url: apiRoot + "/touch" });
         if (res.data.code === "SUCCESS") {
           this.touchData = res.data.data.touch;
           this.currentConnectedServers = res.data.data.touch.connectedServer || [];
-        }\n      } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
     },
     cancel() {
       this.$emit("close");
@@ -165,8 +176,8 @@ export default {
       this.saving = true;
       try {
         const touches = this.serversToRemove.map((s) => ({
-          id: s.id,
-          _type: s._type,
+          id: s.id || s.ID,
+          _type: s._type || s.TYPE,
           sub: s._type === "subscriptionServer" ? (s.sub != null ? s.sub : 0) : 0,
         }));
         const res = await axios({
@@ -211,11 +222,11 @@ export default {
     },
   },
   async mounted() {
-    await this.fetchData();
+    await this.fetchTouchData();
   },
   watch: {
-    tabType() { this.fetchData(); },
-    tabIndex() { this.fetchData(); },
+    tabType() { this.fetchTouchData(); },
+    tabIndex() { this.fetchTouchData(); },
   },
 };
 </script>
@@ -252,4 +263,3 @@ body.theme-dark {
   .bulk-remove-server-item { border-bottom-color: #333; }
 }
 </style>
-
