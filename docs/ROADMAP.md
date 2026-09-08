@@ -42,6 +42,33 @@ This document outlines the current development roadmap, known issues, technical 
    - [ ] Improve error handling consistency
    - [ ] Fix platform-specific edge cases
 
+### Completed Features
+
+- ✅ **Load Balancing (Round Robin)** - Global toggle in Settings to distribute connections evenly across active servers using round-robin algorithm
+  - Basic round-robin implementation
+  - Dynamic server health checking integration
+  - Single-node support
+  - **Fixed: Selector tag mismatch** - When multiple servers are added to a group pool, the balancer selector tags now correctly reference the individual server outbound tags (e.g., `『groupName』_0`, `『groupName』_1`) instead of server names. This fixes the "empty selector list" error and enables proper load balancing functionality.
+
+### Advanced Options (Future Work)
+
+- [ ] **Advanced Load Balancing Algorithms**
+  - [ ] Weighted round-robin
+  - [ ] Least connections
+  - [ ] IP hash / session persistence
+  - [ ] Latency-based selection
+  - [ ] Custom weighting per server
+
+- [ ] **Multi-node Load Balancing**
+  - [ ] Distributed load balancing across multiple v2rayA instances
+  - [ ] Centralized configuration management
+  - [ ] Health check coordination
+
+- [ ] **Load Balancing Analytics**
+  - [ ] Traffic distribution statistics
+  - [ ] Server performance metrics
+  - [ ] Load balancing effectiveness reports
+
 ### Medium Priority
 
 1. **UI/UX Improvements**
@@ -188,6 +215,11 @@ This document outlines the current development roadmap, known issues, technical 
    - Some features unavailable on Windows/macOS
    - Workaround: Use Linux for full features
    - Status: Feature parity planned
+
+3. **Load Balancer Selector Mismatch** (resolved 2026-09-08)
+   - When multiple servers were added to a group pool, the balancer's selector tags didn't match the actual outbound tags created by the core, causing "empty selector list" errors
+   - Fix: Updated selector generation in `template_api.go` to use the same tag format as `template_outbound.go` (e.g., `『groupName』_N`)
+   - Status: Resolved
 
 ### Low
 

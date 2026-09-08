@@ -296,19 +296,48 @@ func (t *Template) resolveOutbounds(
 				return nil, nil, err
 			}
 			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			for _, v := range balancers {
-				c.CoreOutbound.Balancers = append(c.CoreOutbound.Balancers, v.name)
-			}
-			// we use the lowest serverInfo index as the order weight of the balancer outbound
+
+			// Create individual outbound configurations for each server in the balancer group
+			// and collect their unique tags for the balancer's Balancers field
+			var balancerServerTags []string
 			weight := -1
 			for _, v := range balancers {
 				index := serverInfo2Index[v.serverInfo]
 				if weight == -1 || weight > index {
 					weight = index
 				}
-				// tag
-				outboundTags[index] = outboundTag
+
+				// Create unique outbound tag for each server: "『groupName』_N"
+				uniqueServerTag := fmt.Sprintf("%s_%d", outboundTag, index)
+				outboundTags[index] = uniqueServerTag
+
+				// Create individual server outbound configuration
+				serverConfig, err := v.serverInfo.Info.Configuration(serverObj.PriorInfo{
+					Variant:     t.Variant,
+					CoreVersion: t.CoreVersion,
+					Tag:         uniqueServerTag,
+					PluginPort:  v.serverInfo.PluginPort,
+					Backend:     resolveEffectiveBackend(obj, setting),
+				})
+				if err != nil {
+					return nil, nil, err
+				}
+				t.serverInfoMap[uniqueServerTag] = v.serverInfo
+				extraOutbounds = append(extraOutbounds, serverConfig.ExtraOutbounds...)
+				outbounds = append(outbounds, _outbound{
+					weight:   index,
+					outbound: serverConfig.CoreOutbound,
+					balancer: false,
+				})
+				supportUDP[uniqueServerTag] = serverConfig.UDPSupport
+
+				// Add server's unique tag to balancer's server list
+				balancerServerTags = append(balancerServerTags, uniqueServerTag)
 			}
+
+			// Set the balancer's server list to the individual server tags
+			c.CoreOutbound.Balancers = balancerServerTags
+
 			outbounds = append(outbounds, _outbound{
 				weight:   weight,
 				outbound: c.CoreOutbound,
