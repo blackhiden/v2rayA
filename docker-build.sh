@@ -21,7 +21,8 @@ echo "3) Run (For Developers)"
 read -r -p "Enter choice [1-2]: " choice
 
 # --- Step 2: Execute based on choice ---
-IMAGE_NAME="v2raya:local"
+COMMIT_VERSION="$(git rev-parse --short HEAD)"
+IMAGE_NAME="v2raya:${COMMIT_VERSION}"
 case "$choice" in
   1)
     echo "--- Running with Pre-built Image ---"

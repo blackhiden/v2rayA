@@ -1,7 +1,6 @@
 package v2ray
 
 import (
-	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -35,45 +34,67 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	services = slicex.Uniq(append(services, config.Api.Services...))
 	// observatory
 	if serverData != nil {
-		outbounds := t.outNames()
-		for outbound, isGroup := range outbounds {
-			if !isGroup {
+		// Iterate over constructed outbounds to find balancer groups.
+		// t.outNames() returns server tags (e.g. 「『group』_0」) as keys when they're in a group,
+		// but serverData.OutboundName2ServerObjs is keyed by group name (e.g. "group").
+		// So we need to walk t.Outbounds and collect balancer groups explicitly.
+		for _, o := range t.Outbounds {
+			if len(o.Balancers) == 0 {
 				continue
 			}
 
-			//TODO: random, leastload
-			strategy := serverData.OutboundName2Setting[outbound].Type
-			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outbound].ProbeInterval)
-			if err != nil {
-				log.Warn("observatory: %v", err)
-				interval = 10 * time.Second
+			// o.Tag is the group tag.
+			groupTag := o.Tag
+			// t.Outbounds only contains outbounds created by SetOutbound.
+			// For balancer outbounds, o.Balancers is already populated by template_outbound.go
+			// with the exact server outbound tags that exist in t.Outbounds.
+			// Reuse that list directly so the selector always matches actual outbounds.
+			selector := make([]string, len(o.Balancers))
+			copy(selector, o.Balancers)
+			if len(selector) == 0 {
+				log.Warn("template_api: skipping balancer group %q because no server outbound tags were available (empty Balancers list)", groupTag)
+				continue
 			}
-			var selector []string
+			log.Debug("template_api: reusing %d server tags from o.Balancers for group %q: %v", len(selector), groupTag, selector)
 
-			// Build selector tags that match the actual outbound tags created in template_outbound.go
-			// When usedByBalancer is true, outbounds are created with tags like 『outboundName』_0, 『outboundName』_1
-			// We need to match these tags in the selector
-			for i := range serverData.OutboundName2ServerObjs[outbound] {
-				// Create selector tag matching the outbound tag format used in template_outbound.go
-				selectorTag := GroupWrapper(fmt.Sprintf("%s_%d", outbound, i))
-				selector = append(selector, selectorTag)
+			// Derive the outbound name (key into serverData) from the group tag.
+			// t.serverInfoMap stores info keyed by group tag (o.Tag), and serverInfo.OutboundName
+			// is the actual outbound name used in settings maps (may differ from extracted group name).
+			// Look up outbound name from serverInfoMap; fall back to extracted name if not found.
+			var outboundName string
+			if info, ok := t.serverInfoMap[groupTag]; ok && info != nil {
+				outboundName = info.OutboundName
+				log.Debug("template_api: resolved outbound name %q for balancer group %q via serverInfoMap", outboundName, groupTag)
+			} else {
+				log.Warn("template_api: group tag %q not found in serverInfoMap, falling back to extracted name %q (settings lookup may use different key)", groupTag, extractGroupName(groupTag))
+				outboundName = extractGroupName(groupTag)
+			}
+
+			//TODO: random, leastload
+			strategy := serverData.OutboundName2Setting[outboundName].Type
+			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outboundName].ProbeInterval)
+			if err != nil {
+				log.Warn("observatory: invalid duration %q for outbound group %q (key %q), using default 10s: %v",
+					serverData.OutboundName2Setting[outboundName].ProbeInterval, groupTag, outboundName, err)
+				interval = 10 * time.Second
 			}
 
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
-				Tag:      outbound,
+				Tag:      groupTag,
 				Selector: selector,
 				Strategy: coreObj.BalancerStrategy{
 					Type: strategy.String(),
 					Settings: &coreObj.StrategySettings{
-						ObserverTag: outbound,
+						ObserverTag: groupTag,
 					},
 				},
 			})
 
 			if strings.ToLower(strategy.String()) == "leastping" {
-				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
+				probeUrl := serverData.OutboundName2Setting[outboundName].ProbeURL
 				if _, err := url.Parse(probeUrl); err != nil {
-					log.Warn("observatory: %v", err)
+					log.Warn("observatory: invalid probe URL %q for outbound group %q (key %q), using default %q: %v",
+						probeUrl, groupTag, outboundName, "https://gstatic.com/generate_204", err)
 					probeUrl = "https://gstatic.com/generate_204"
 				}
 
@@ -82,7 +103,7 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 					t.MultiObservatory = &coreObj.MultiObservatory{}
 				}
 				t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
-					Tag: outbound,
+					Tag: groupTag,
 					Settings: coreObj.Observatory{
 						SubjectSelector: selector,
 						PingConfig: &coreObj.PingConfig{
@@ -101,9 +122,9 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 			if t.Variant == where.V2rayaCore {
 
 				var observatoryTags []string
-				for name, isGroup := range t.outNames() {
-					if isGroup {
-						observatoryTags = append(observatoryTags, name)
+				for _, o := range t.Outbounds {
+					if len(o.Balancers) > 0 {
+						observatoryTags = append(observatoryTags, o.Tag)
 					}
 				}
 				t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
@@ -131,4 +152,16 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	})
 	t.ApiPort = port
 	return port, nil
+}
+
+// extractGroupName derives the raw group name from a GroupWrapper(tag).
+// GroupWrapper wraps with 「『...』」, so this strips those markers.
+// If the tag is not wrapped, it is returned as-is.
+func extractGroupName(groupTag string) string {
+	start := strings.Index(groupTag, "『")
+	end := strings.Index(groupTag, "』")
+	if start == -1 || end == -1 || end <= start {
+		return groupTag
+	}
+	return groupTag[start+1 : end]
 }
