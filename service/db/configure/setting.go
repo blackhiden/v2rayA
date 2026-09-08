@@ -23,6 +23,7 @@ type Setting struct {
 	RouteOnly                          bool            `json:"routeOnly"`
 	PortSharing                        bool            `json:"portSharing"`
 	TransparentType                    TransparentType `json:"transparentType"`
+	LoadBalance                        bool            `json:"loadBalance"`
 	TproxyExcludedInterfaces           string          `json:"tproxyExcludedInterfaces"`
 	TunBypassInterfaces                string          `json:"tunBypassInterfaces"`
 	TunAutoRoute                       bool            `json:"tunAutoRoute"`
@@ -34,6 +35,8 @@ type Setting struct {
 	TunExcludeProcesses                string          `json:"tunExcludeProcesses"`
 	SsBackend                          string          `json:"ssBackend"`
 	TrojanBackend                      string          `json:"trojanBackend"`
+	// Load Balancing - Global toggle for round-robin load balancing
+	LoadBalance bool `json:"loadBalance"`
 	// 新 DNS 模块监听配置
 	DnsListenAddr string `json:"dnsListenAddr"` // 监听地址，默认 "0.0.0.0:52353"
 
@@ -65,6 +68,8 @@ func NewSetting() (setting *Setting) {
 		TransparentType:                    TransparentRedirect,
 		TproxyExcludedInterfaces:           "docker*,veth*,wg*,ppp*,br-*",
 		TunAutoRoute:                       true,
+		// Load Balancing - disabled by default
+		LoadBalance:                        false,
 		// 新 DNS 模块默认值
 		DnsListenAddr:    "0.0.0.0:52353",
 		DnsCacheEnabled:  true,

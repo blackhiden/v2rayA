@@ -42,6 +42,32 @@ This document outlines the current development roadmap, known issues, technical 
    - [ ] Improve error handling consistency
    - [ ] Fix platform-specific edge cases
 
+### Completed Features
+
+- ✅ **Load Balancing (Round Robin)** - Global toggle in Settings to distribute connections evenly across active servers using round-robin algorithm
+  - Basic round-robin implementation
+  - Dynamic server health checking integration
+  - Single-node support
+
+### Advanced Options (Future Work)
+
+- [ ] **Advanced Load Balancing Algorithms**
+  - [ ] Weighted round-robin
+  - [ ] Least connections
+  - [ ] IP hash / session persistence
+  - [ ] Latency-based selection
+  - [ ] Custom weighting per server
+
+- [ ] **Multi-node Load Balancing**
+  - [ ] Distributed load balancing across multiple v2rayA instances
+  - [ ] Centralized configuration management
+  - [ ] Health check coordination
+
+- [ ] **Load Balancing Analytics**
+  - [ ] Traffic distribution statistics
+  - [ ] Server performance metrics
+  - [ ] Load balancing effectiveness reports
+
 ### Medium Priority
 
 1. **UI/UX Improvements**

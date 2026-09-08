@@ -28,6 +28,7 @@ We are committed to providing the simplest operation and meeting most needs. Tha
 - **Routing rules:** Powerful routing capabilities based on RoutingA and V2Ray/XRay routing
 - **Containerized:** Official Docker images available
 - **Live Flow Topology:** Experimental SVG diagram of observed routes from source through the selected proxy to destination, excluding the internal `gstatic.com:443` latency probe
+- **Load Balancing:** Round-robin load balancing to distribute connections evenly across active servers (configurable in Settings)
 
 1. Install from apt-source or AUR
 2. Docker
