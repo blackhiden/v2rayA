@@ -35,8 +35,6 @@ type Setting struct {
 	TunExcludeProcesses                string          `json:"tunExcludeProcesses"`
 	SsBackend                          string          `json:"ssBackend"`
 	TrojanBackend                      string          `json:"trojanBackend"`
-	// Load Balancing - Global toggle for round-robin load balancing
-	LoadBalance bool `json:"loadBalance"`
 	// 新 DNS 模块监听配置
 	DnsListenAddr string `json:"dnsListenAddr"` // 监听地址，默认 "0.0.0.0:52353"
 
