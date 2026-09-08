@@ -21,9 +21,10 @@ func (t *Template) outNames() map[string]bool {
 	tags := make(map[string]bool)
 	for _, o := range t.Outbounds {
 		if len(o.Balancers) > 0 {
-			for _, groupName := range o.Balancers {
-				tags[groupName] = true
-			}
+			// This is a balancer outbound - mark the balancer tag itself as available
+			// Individual server tags (o.Balancers) are NOT added here because routing
+			// rules should reference the balancer tag, not individual servers.
+			tags[o.Tag] = true
 		} else {
 			tags[o.Tag] = false
 		}

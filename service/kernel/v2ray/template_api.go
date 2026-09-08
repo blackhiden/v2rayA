@@ -157,11 +157,24 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 // extractGroupName derives the raw group name from a GroupWrapper(tag).
 // GroupWrapper wraps with 「『...』」, so this strips those markers.
 // If the tag is not wrapped, it is returned as-is.
+//
+// Note: Uses rune-based indexing to correctly handle multi-byte UTF-8 characters
+// like 『 (U+300E) and 』 (U+300D), which are 3 bytes each in UTF-8.
 func extractGroupName(groupTag string) string {
-	start := strings.Index(groupTag, "『")
-	end := strings.Index(groupTag, "』")
+	runes := []rune(groupTag)
+	start := -1
+	end := -1
+	for i, r := range runes {
+		if r == '『' && start == -1 {
+			start = i
+		}
+		if r == '』' {
+			end = i
+			break
+		}
+	}
 	if start == -1 || end == -1 || end <= start {
 		return groupTag
 	}
-	return groupTag[start+1 : end]
+	return string(runes[start+1 : end])
 }
