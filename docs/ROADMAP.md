@@ -48,6 +48,7 @@ This document outlines the current development roadmap, known issues, technical 
   - Basic round-robin implementation
   - Dynamic server health checking integration
   - Single-node support
+  - **Fixed: Selector tag mismatch** - When multiple servers are added to a group pool, the balancer selector tags now correctly reference the individual server outbound tags (e.g., `『groupName』_0`, `『groupName』_1`) instead of server names. This fixes the "empty selector list" error and enables proper load balancing functionality.
 
 ### Advanced Options (Future Work)
 
@@ -214,6 +215,11 @@ This document outlines the current development roadmap, known issues, technical 
    - Some features unavailable on Windows/macOS
    - Workaround: Use Linux for full features
    - Status: Feature parity planned
+
+3. **Load Balancer Selector Mismatch** (resolved 2026-09-08)
+   - When multiple servers were added to a group pool, the balancer's selector tags didn't match the actual outbound tags created by the core, causing "empty selector list" errors
+   - Fix: Updated selector generation in `template_api.go` to use the same tag format as `template_outbound.go` (e.g., `『groupName』_N`)
+   - Status: Resolved
 
 ### Low
 

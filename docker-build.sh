@@ -59,7 +59,7 @@ case "$choice" in
     ;;
   3) docker run --rm \
     --name v2rayatest \
-    -v $(pwd)/data:/etc/v2raya
+    -v $(pwd)/data:/etc/v2raya \
     --network host \
     $IMAGE_NAME
     ;;

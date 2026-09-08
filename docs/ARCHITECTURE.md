@@ -201,6 +201,58 @@ The event source provides route selection, not exact per-session byte counters o
 4. **DNS:** Custom rules, anti-pollution
 5. **Logging:** Levels, output destinations
 
+### Outbound Group Configuration
+
+v2rayA supports grouping multiple servers into outbound groups for load balancing and manual selection.
+
+#### Balancer Groups (Load Balancing)
+
+When multiple servers share the same outbound group name:
+1. **Individual Server Outbounds:** Each server gets its own outbound configuration with a unique tag following the pattern `『groupName』_N` (e.g., `『proxy』_0`, `『proxy』_1`)
+2. **Balancer Outbound:** A balancer outbound is created with tag `『groupName』` that references all server outbounds
+3. **Selector Configuration:** The balancer's selector field contains the tags of all individual server outbounds
+4. **Routing Integration:** Routing rules automatically use the group name as a balancer tag
+
+**Configuration Example:**
+```json
+{
+  "outbounds": [
+    {
+      "tag": "『proxy』_0",
+      "protocol": "vmess",
+      "settings": { ... }
+    },
+    {
+      "tag": "『proxy』_1", 
+      "protocol": "vmess",
+      "settings": { ... }
+    },
+    {
+      "tag": "『proxy』",
+      "protocol": "selector",
+      "settings": {
+        "selectors": ["『proxy』_0", "『proxy』_1"]
+      }
+    }
+  ]
+}
+```
+
+#### Selector Groups (Manual Selection)
+
+For manual server selection:
+- Similar outbound structure as balancer groups
+- Users select which server to use via GUI
+- Observatory monitors server health within the group
+
+#### Tag Format
+
+All group-related outbound tags follow the format:
+- Group tag: `『groupName』`
+- Individual server tags: `『groupName』_N` where N is the server index
+
+This consistent tagging ensures proper routing and load balancing functionality.
+
 ### Auto-Update Mechanisms
 1. **Subscription Updates:**
    - Configurable intervals

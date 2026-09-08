@@ -1,6 +1,7 @@
 package v2ray
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -49,8 +50,13 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 			}
 			var selector []string
 
-			for _, vi := range serverData.OutboundName2ServerObjs[outbound] {
-				selector = append(selector, GroupWrapper(vi.GetName()))
+			// Build selector tags that match the actual outbound tags created in template_outbound.go
+			// When usedByBalancer is true, outbounds are created with tags like 『outboundName』_0, 『outboundName』_1
+			// We need to match these tags in the selector
+			for i := range serverData.OutboundName2ServerObjs[outbound] {
+				// Create selector tag matching the outbound tag format used in template_outbound.go
+				selectorTag := GroupWrapper(fmt.Sprintf("%s_%d", outbound, i))
+				selector = append(selector, selectorTag)
 			}
 
 			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{

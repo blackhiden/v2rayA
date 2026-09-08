@@ -138,6 +138,48 @@ ip(geoip:private) -> direct
 - JSON configurations
 - Standard subscription formats
 
+### 6. Load Balancing
+
+#### 6.1 Load Balancer Configuration
+
+Load balancing distributes connections across multiple servers in a group using round-robin algorithm.
+
+**Configuration Structure:**
+- Each group of servers creates a balancer outbound with tag `『groupName』`
+- Individual server outbounds are created with tags `『groupName』_0`, `『groupName』_1`, etc.
+- The balancer's `selector` field references these individual server tags
+- Routing rules use the group name as `balancerTag` to enable load balancing
+
+**Key Implementation Details:**
+- When multiple servers share the same outbound group, the system creates:
+  1. Individual outbound configurations for each server (with unique tags)
+  2. A balancer outbound that references all server outbounds
+- The balancer selector must match the actual outbound tags for proper operation
+- Server health probes (observatory) monitor individual server status within the group
+
+**Error Handling:**
+- "empty selector list" error occurs if balancer selectors don't match any outbound tags
+- This is prevented by ensuring selector tags use the same format as outbound tags
+
+#### 6.2 Outbound Group Types
+
+1. **Balancer (Load Balancing)**
+   - Multiple servers in same group → automatic load balancing
+   - Round-robin distribution across healthy servers
+   - Individual server health monitoring via observatory
+
+2. **Selector (Manual Selection)**
+   - Users manually select which server to use
+   - GUI provides server switching interface
+   - Also uses group outbound structure
+
+#### 6.3 Observatory Integration
+
+Load balancer groups integrate with the observatory system for health monitoring:
+- Health probes run for each balancer group
+- Probe results determine server availability
+- Unhealthy servers are excluded from load balancing rotation
+
 ## User Interface Requirements
 
 ### 1. Dashboard
