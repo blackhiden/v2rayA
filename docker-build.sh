@@ -50,6 +50,7 @@ case "$choice" in
     echo "Building the Docker image..."
     docker image build \
       -t ${IMAGE_NAME} \
+      --no-cache \
       --build-arg VERSION="${VERSION}" \
       --build-arg COMMIT="${COMMIT}" \
       --build-arg BUILD_DATE="${BUILD_DATE}" .
