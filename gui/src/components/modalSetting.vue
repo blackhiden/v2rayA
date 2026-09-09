@@ -18,19 +18,6 @@
         </b-button>
       </b-field>
       <hr class="dropdown-divider" style="margin: 1.25rem 0 1.25rem" />
-      <b-field label-position="on-border">
-        <template slot="label">
-          {{ $t("setting.loadBalance") }}
-          <b-tooltip type="is-dark" :label="$t('setting.messages.loadBalance')" multilined position="is-right">
-            <b-icon size="is-small" icon=" iconfont icon-help-circle-outline"
-              style="position: relative; top: 2px; right: 3px; font-weight: normal" />
-          </b-tooltip>
-        </template>
-        <b-checkbox-button v-model="loadBalance" :native-value="true">
-          {{ $t("setting.options.on") }}
-        </b-checkbox-button>
-      </b-field>
-      <hr class="dropdown-divider" style="margin: 1.25rem 0 1.25rem" />
       <b-field label-position="on-border" class="with-icon-alert">
         <template slot="label">
           {{ $t("setting.transparentProxy") }}
@@ -434,7 +421,6 @@ export default {
     os: "",
     isRoot: false,
     tinytunSupported: false,
-    loadBalance: false,
   }),
   computed: {
     tunBypassInterfacesComputed: {
@@ -578,7 +564,6 @@ export default {
             tunTeardownScript: this.tunTeardownScript,
             tunProcessBackend: this.tunProcessBackend,
             tunExcludeProcesses: this.tunExcludeProcesses,
-            loadBalance: this.loadBalance,
           },
           cancelToken: new axios.CancelToken(function executor(c) {
             cancel = c;

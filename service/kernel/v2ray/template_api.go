@@ -32,104 +32,8 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 		"LoggerService",
 	}
 	services = slicex.Uniq(append(services, config.Api.Services...))
-	// observatory
 	if serverData != nil {
-		// Iterate over constructed outbounds to find balancer groups.
-		// t.outNames() returns server tags (e.g. 「『group』_0」) as keys when they're in a group,
-		// but serverData.OutboundName2ServerObjs is keyed by group name (e.g. "group").
-		// So we need to walk t.Outbounds and collect balancer groups explicitly.
-		for _, o := range t.Outbounds {
-			if len(o.Balancers) == 0 {
-				continue
-			}
-
-			// o.Tag is the group tag.
-			groupTag := o.Tag
-			// t.Outbounds only contains outbounds created by SetOutbound.
-			// For balancer outbounds, o.Balancers is already populated by template_outbound.go
-			// with the exact server outbound tags that exist in t.Outbounds.
-			// Reuse that list directly so the selector always matches actual outbounds.
-			selector := make([]string, len(o.Balancers))
-			copy(selector, o.Balancers)
-			if len(selector) == 0 {
-				log.Warn("template_api: skipping balancer group %q because no server outbound tags were available (empty Balancers list)", groupTag)
-				continue
-			}
-			log.Debug("template_api: reusing %d server tags from o.Balancers for group %q: %v", len(selector), groupTag, selector)
-
-			// Derive the outbound name (key into serverData) from the group tag.
-			// t.serverInfoMap stores info keyed by group tag (o.Tag), and serverInfo.OutboundName
-			// is the actual outbound name used in settings maps (may differ from extracted group name).
-			// Look up outbound name from serverInfoMap; fall back to extracted name if not found.
-			var outboundName string
-			if info, ok := t.serverInfoMap[groupTag]; ok && info != nil {
-				outboundName = info.OutboundName
-				log.Debug("template_api: resolved outbound name %q for balancer group %q via serverInfoMap", outboundName, groupTag)
-			} else {
-				log.Warn("template_api: group tag %q not found in serverInfoMap, falling back to extracted name %q (settings lookup may use different key)", groupTag, extractGroupName(groupTag))
-				outboundName = extractGroupName(groupTag)
-			}
-
-			//TODO: random, leastload
-			strategy := serverData.OutboundName2Setting[outboundName].Type
-			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outboundName].ProbeInterval)
-			if err != nil {
-				log.Warn("observatory: invalid duration %q for outbound group %q (key %q), using default 10s: %v",
-					serverData.OutboundName2Setting[outboundName].ProbeInterval, groupTag, outboundName, err)
-				interval = 10 * time.Second
-			}
-
-			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
-				Tag:      groupTag,
-				Selector: selector,
-				Strategy: coreObj.BalancerStrategy{
-					Type: strategy.String(),
-					Settings: &coreObj.StrategySettings{
-						ObserverTag: groupTag,
-					},
-				},
-			})
-
-			if strings.ToLower(strategy.String()) == "leastping" {
-				probeUrl := serverData.OutboundName2Setting[outboundName].ProbeURL
-				if _, err := url.Parse(probeUrl); err != nil {
-					log.Warn("observatory: invalid probe URL %q for outbound group %q (key %q), using default %q: %v",
-						probeUrl, groupTag, outboundName, "https://gstatic.com/generate_204", err)
-					probeUrl = "https://gstatic.com/generate_204"
-				}
-
-				// v2raya_core always uses MultiObservatory: one observer per balancer group.
-				if t.MultiObservatory == nil {
-					t.MultiObservatory = &coreObj.MultiObservatory{}
-				}
-				t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
-					Tag: groupTag,
-					Settings: coreObj.Observatory{
-						SubjectSelector: selector,
-						PingConfig: &coreObj.PingConfig{
-							Destination: probeUrl,
-							Interval:    interval.String(),
-						},
-						// Keep legacy fields for backward compatibility with older custom cores.
-						ProbeURL:      probeUrl,
-						ProbeInterval: interval.String(),
-					},
-				})
-			}
-		}
-		if t.MultiObservatory != nil || t.Observatory != nil {
-			// v2raya_core supports ObservatoryService via the v2ray-compat gRPC path.
-			if t.Variant == where.V2rayaCore {
-
-				var observatoryTags []string
-				for _, o := range t.Outbounds {
-					if len(o.Balancers) > 0 {
-						observatoryTags = append(observatoryTags, o.Tag)
-					}
-				}
-				t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
-			}
-		}
+		t.setBalancerConfiguration(serverData, port)
 	}
 	t.API = &coreObj.APIObject{
 		Tag:      "api-out",
@@ -154,27 +58,73 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	return port, nil
 }
 
-// extractGroupName derives the raw group name from a GroupWrapper(tag).
-// GroupWrapper wraps with 「『...』」, so this strips those markers.
-// If the tag is not wrapped, it is returned as-is.
-//
-// Note: Uses rune-based indexing to correctly handle multi-byte UTF-8 characters
-// like 『 (U+300E) and 』 (U+300D), which are 3 bytes each in UTF-8.
-func extractGroupName(groupTag string) string {
-	runes := []rune(groupTag)
-	start := -1
-	end := -1
-	for i, r := range runes {
-		if r == '『' && start == -1 {
-			start = i
+// setBalancerConfiguration adds routing balancers and any strategy-specific
+// observatory configuration for enabled proxy groups.
+func (t *Template) setBalancerConfiguration(serverData *ServerData, apiPort int) {
+	if serverData == nil {
+		return
+	}
+	for _, group := range t.balancerGroups {
+		groupTag := group.Tag
+		selector := append([]string(nil), group.Selector...)
+		if len(selector) == 0 {
+			log.Warn("template_api: skipping balancer group %q because no server outbound tags were available", groupTag)
+			continue
 		}
-		if r == '』' {
-			end = i
-			break
+		outboundName := group.OutboundName
+
+		outboundSetting := serverData.OutboundName2Setting[outboundName]
+		strategy := outboundSetting.LoadBalanceStrategy
+
+		t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
+			Tag:      groupTag,
+			Selector: selector,
+			Strategy: coreObj.BalancerStrategy{
+				Type: strategy,
+			},
+		})
+
+		if strings.ToLower(strategy) == "leastping" {
+			interval, err := time.ParseDuration(outboundSetting.ProbeInterval)
+			if err != nil {
+				log.Warn("observatory: invalid duration %q for outbound group %q (key %q), using default 10s: %v",
+					outboundSetting.ProbeInterval, groupTag, outboundName, err)
+				interval = 10 * time.Second
+			}
+			probeUrl := outboundSetting.ProbeURL
+			if _, err := url.Parse(probeUrl); err != nil {
+				log.Warn("observatory: invalid probe URL %q for outbound group %q (key %q), using default %q: %v",
+					probeUrl, groupTag, outboundName, "https://gstatic.com/generate_204", err)
+				probeUrl = "https://gstatic.com/generate_204"
+			}
+
+			// v2raya_core uses one observer per strategy that requires latency data.
+			if t.MultiObservatory == nil {
+				t.MultiObservatory = &coreObj.MultiObservatory{}
+			}
+			t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
+				Tag: groupTag,
+				Settings: coreObj.Observatory{
+					SubjectSelector: selector,
+					PingConfig: &coreObj.PingConfig{
+						Destination: probeUrl,
+						Interval:    interval.String(),
+					},
+					// Keep legacy fields for backward compatibility with older custom cores.
+					ProbeURL:      probeUrl,
+					ProbeInterval: interval.String(),
+				},
+			})
 		}
 	}
-	if start == -1 || end == -1 || end <= start {
-		return groupTag
+	if t.MultiObservatory != nil || t.Observatory != nil {
+		// v2raya_core supports ObservatoryService via the v2ray-compat gRPC path.
+		if t.Variant == where.V2rayaCore {
+			var observatoryTags []string
+			for _, group := range t.balancerGroups {
+				observatoryTags = append(observatoryTags, group.Tag)
+			}
+			t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(apiPort, observatoryTags))
+		}
 	}
-	return string(runes[start+1 : end])
 }

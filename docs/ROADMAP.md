@@ -44,11 +44,11 @@ This document outlines the current development roadmap, known issues, technical 
 
 ### Completed Features
 
-- ✅ **Load Balancing (Round Robin)** - Global toggle in Settings to distribute connections evenly across active servers using round-robin algorithm
-  - Basic round-robin implementation
-  - Dynamic server health checking integration
-  - Single-node support
-  - **Fixed: Selector tag mismatch** - When multiple servers are added to a group pool, the balancer selector tags now correctly reference the individual server outbound tags (e.g., `『groupName』_0`, `『groupName』_1`) instead of server names. This fixes the "empty selector list" error and enables proper load balancing functionality.
+- ✅ **Per-proxy-group load balancing (Round Robin)**
+  - Each proxy group persists its own enabled flag and algorithm; the global Settings toggle was removed.
+  - Enabled groups with two or more members generate one Xray routing balancer with exact member selector tags (for example, `『PROXY』_0` through `『PROXY』_4`).
+  - The group settings UI exposes an on/off switch and an algorithm selector, currently offering round robin.
+  - Group routing is translated to the Xray balancer tag, so all new proxied connections are distributed sequentially across that group’s active members.
 
 ### Advanced Options (Future Work)
 
@@ -216,9 +216,9 @@ This document outlines the current development roadmap, known issues, technical 
    - Workaround: Use Linux for full features
    - Status: Feature parity planned
 
-3. **Load Balancer Selector Mismatch** (resolved 2026-09-08)
-   - When multiple servers were added to a group pool, the balancer's selector tags didn't match the actual outbound tags created by the core, causing "empty selector list" errors
-   - Fix: Updated selector generation in `template_api.go` to use the same tag format as `template_outbound.go` (e.g., `『groupName』_N`)
+3. **Load Balancer Grouping and Selector Mismatch** (resolved 2026-09-09)
+   - The former global implementation grouped by server object instead of proxy-group name, so a group of different servers could not produce one complete selector and could emit invalid balancer metadata.
+   - Fix: Build an Xray routing balancer from all selected members sharing the outbound-group name, with exact `『groupName』_N` member tags and raw-name-to-balancer routing translation.
    - Status: Resolved
 
 ### Low
@@ -243,9 +243,9 @@ This document outlines the current development roadmap, known issues, technical 
    - Status: Design phase
 
 2. **Multi-server Load Balancing**
-   - Distribute traffic across servers
+   - Per-proxy-group round-robin distribution is complete; advanced algorithms and analytics remain planned.
    - Priority: Medium
-   - Status: Evaluation
+   - Status: Initial implementation complete
 
 3. **Protocol Compression**
    - Reduce bandwidth usage

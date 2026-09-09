@@ -20,16 +20,24 @@ import (
 func (t *Template) outNames() map[string]bool {
 	tags := make(map[string]bool)
 	for _, o := range t.Outbounds {
-		if len(o.Balancers) > 0 {
-			// This is a balancer outbound - mark the balancer tag itself as available
-			// Individual server tags (o.Balancers) are NOT added here because routing
-			// rules should reference the balancer tag, not individual servers.
-			tags[o.Tag] = true
-		} else {
-			tags[o.Tag] = false
-		}
+		tags[o.Tag] = false
+	}
+	for _, group := range t.balancerGroups {
+		// Routing rules refer to the group tag, while selector members remain
+		// implementation details of the balancer.
+		tags[group.Tag] = true
+		tags[group.OutboundName] = true
 	}
 	return tags
+}
+
+func (t *Template) balancerTagForOutbound(outboundName string) (string, bool) {
+	for _, group := range t.balancerGroups {
+		if outboundName == group.OutboundName || outboundName == group.Tag {
+			return group.Tag, true
+		}
+	}
+	return "", false
 }
 
 func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGroup bool) bool) (outboundName string, isGroup bool) {
@@ -41,26 +49,28 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 	// deduplicate
 	m := make(map[string]struct{})
 
+	memberToGroup := make(map[string]string)
+	for _, group := range t.balancerGroups {
+		for _, member := range group.Selector {
+			memberToGroup[member] = group.Tag
+		}
+	}
 	for _, o := range t.Outbounds {
 		switch o.Tag {
 		case "direct", "block", "dns-out":
 			continue
 		}
-		if len(o.Balancers) > 0 {
-			// This is a balancer group outbound.
-			// For routing purposes, we want to return the balancer tag itself,
-			// not the individual server tags. This ensures routing rules point
-			// to the balancer group, enabling load balancing distribution.
-			if _, ok := m[o.Tag]; !ok {
-				if filter(o.Tag, true) {
-					return o.Tag, true
+		if groupTag, ok := memberToGroup[o.Tag]; ok {
+			if _, seen := m[groupTag]; !seen {
+				if filter(groupTag, true) {
+					return groupTag, true
 				}
-				m[o.Tag] = struct{}{}
+				m[groupTag] = struct{}{}
 			}
-		} else {
-			if filter(o.Tag, false) {
-				return o.Tag, false
-			}
+			continue
+		}
+		if filter(o.Tag, false) {
+			return o.Tag, false
 		}
 	}
 	return
@@ -574,10 +584,10 @@ func (t *Template) setWhitelistRouting(whitelist []Addr) {
 }
 
 func (t *Template) setGroupRouting() {
-	outbounds := t.outNames()
 	for i := range t.Routing.Rules {
-		if t.Routing.Rules[i].OutboundTag != "" && outbounds[t.Routing.Rules[i].OutboundTag] == true {
-			t.Routing.Rules[i].BalancerTag, t.Routing.Rules[i].OutboundTag = t.Routing.Rules[i].OutboundTag, ""
+		if balancerTag, ok := t.balancerTagForOutbound(t.Routing.Rules[i].OutboundTag); ok {
+			t.Routing.Rules[i].BalancerTag = balancerTag
+			t.Routing.Rules[i].OutboundTag = ""
 		}
 	}
 }

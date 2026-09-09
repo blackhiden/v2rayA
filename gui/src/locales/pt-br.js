@@ -337,6 +337,12 @@ export default {
     addMessage: "Digite o nome do destino de saída que deseja adicionar:",
     deleteMessage:
       'Tem certeza de que deseja <b>EXCLUIR</b> o destino de saída "{outboundName}"? Essa ação não pode ser desfeita.',
+    loadBalanceEnabled: "Load balancing",
+    loadBalanceStrategy: "Algorithm",
+    loadBalanceDescription: "Enable this group to distribute new proxy connections evenly across active members. At least two members are required.",
+    loadBalanceStrategies: {
+      roundrobin: "Round robin",
+    },
   },
   log: {
     logModalTitle: "Visualizar logs",

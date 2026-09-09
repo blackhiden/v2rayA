@@ -142,20 +142,19 @@ ip(geoip:private) -> direct
 
 #### 6.1 Load Balancer Configuration
 
-Load balancing distributes connections across multiple servers in a group using round-robin algorithm.
+Load balancing is enabled independently for each proxy group. It distributes new proxy connections across the selected members of that group using the configured algorithm; `roundrobin` is the only currently supported algorithm.
 
 **Configuration Structure:**
-- Each group of servers creates a balancer outbound with tag `『groupName』`
-- Individual server outbounds are created with tags `『groupName』_0`, `『groupName』_1`, etc.
-- The balancer's `selector` field references these individual server tags
-- Routing rules use the group name as `balancerTag` to enable load balancing
+- `OutboundSetting.loadBalanceEnabled` defaults to `false`; `loadBalanceStrategy` defaults to `roundrobin`.
+- An enabled group with two or more selected members creates individual outbounds with tags `『groupName』_0`, `『groupName』_1`, etc.
+- Xray `routing.balancers` contains group tag `『groupName』`, an exact selector of the individual tags, and `strategy.type: "roundrobin"`.
+- Rules that target the raw group name or wrapped group tag use Xray `balancerTag` to select the routing balancer.
+- A disabled or one-member group has no balancer and uses its first selected member as an ordinary outbound.
 
 **Key Implementation Details:**
-- When multiple servers share the same outbound group, the system creates:
-  1. Individual outbound configurations for each server (with unique tags)
-  2. A balancer outbound that references all server outbounds
+- When the policy is enabled for a group with multiple members, the system creates individual outbound configurations and one routing balancer that references all of their tags.
 - The balancer selector must match the actual outbound tags for proper operation
-- Server health probes (observatory) monitor individual server status within the group
+- The selected Xray round-robin strategy assigns new connections sequentially. Existing connections are not migrated or split across servers.
 
 **Error Handling:**
 - "empty selector list" error occurs if balancer selectors don't match any outbound tags
@@ -164,9 +163,9 @@ Load balancing distributes connections across multiple servers in a group using 
 #### 6.2 Outbound Group Types
 
 1. **Balancer (Load Balancing)**
-   - Multiple servers in same group → automatic load balancing
-   - Round-robin distribution across healthy servers
-   - Individual server health monitoring via observatory
+    - Opt-in per proxy group; at least two selected members are needed to distribute traffic.
+    - Round-robin distribution is performed by Xray for each new proxy connection.
+    - Changing the group policy regenerates and restarts the active core configuration through the existing outbound settings API.
 
 2. **Selector (Manual Selection)**
    - Users manually select which server to use
@@ -175,10 +174,7 @@ Load balancing distributes connections across multiple servers in a group using 
 
 #### 6.3 Observatory Integration
 
-Load balancer groups integrate with the observatory system for health monitoring:
-- Health probes run for each balancer group
-- Probe results determine server availability
-- Unhealthy servers are excluded from load balancing rotation
+The round-robin strategy does not require observatory data and does not provide health-based failover. Observatory settings remain available for latency-related strategies that may be added later.
 
 ## User Interface Requirements
 
