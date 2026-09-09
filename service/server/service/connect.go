@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/v2rayA/v2rayA/db/configure"
@@ -98,18 +97,16 @@ func Connect(which *configure.Which) (err error) {
 	if which == nil {
 		return fmt.Errorf("which can not be nil")
 	}
-	setting := GetSetting()
 	if err = checkSupport([]*configure.Which{which}); err != nil {
-		if !errors.Is(err, V2OnlyFeatureError) {
+		return err
+	}
+	setting := GetSetting()
+	// When load balancing is enabled, don't clear existing connections
+	// This allows multiple servers to share the same outbound name
+	// The v2ray template will create a balancer for round-robin distribution
+	if !setting.LoadBalance {
+		if err = configure.ClearConnects(which.Outbound); err != nil {
 			return err
-		}
-		// When load balancing is enabled, don't clear existing connections
-		// This allows multiple servers to share the same outbound name
-		// The v2ray template will create a balancer for round-robin distribution
-		if !setting.LoadBalance {
-			if err = configure.ClearConnects(which.Outbound); err != nil {
-				return err
-			}
 		}
 	}
 	//configure the ip forward

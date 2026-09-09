@@ -47,13 +47,15 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 			continue
 		}
 		if len(o.Balancers) > 0 {
-			for _, v := range o.Balancers {
-				if _, ok := m[v]; !ok {
-					if filter(v, true) {
-						return v, true
-					}
-					m[v] = struct{}{}
+			// This is a balancer group outbound.
+			// For routing purposes, we want to return the balancer tag itself,
+			// not the individual server tags. This ensures routing rules point
+			// to the balancer group, enabling load balancing distribution.
+			if _, ok := m[o.Tag]; !ok {
+				if filter(o.Tag, true) {
+					return o.Tag, true
 				}
+				m[o.Tag] = struct{}{}
 			}
 		} else {
 			if filter(o.Tag, false) {
