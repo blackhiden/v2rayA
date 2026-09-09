@@ -11,8 +11,9 @@ RUN yarn cache clean && yarn && yarn build
 FROM --platform=$BUILDPLATFORM golang:trixie AS builder
 WORKDIR /app
 # Define the build arguments passed from GitHub Actions
-ARG APP_VERSION=v0.0.0
-ARG APP_COMMIT=unknown
+ARG VERSION=v0.0.0
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
 RUN set -eux;     \
     apt update -y; \
     apt install -y --no-install-recommends       \
@@ -37,7 +38,6 @@ COPY ./service .
 RUN go mod tidy
 COPY --from=builder-web /web ./server/router/web
 RUN set -eux;   \
-    export BUILD_DATE="$(date +%Y-%m-%d)";   \
     CGO_ENABLED=1 \
         GOOS=linux \
         go build \
