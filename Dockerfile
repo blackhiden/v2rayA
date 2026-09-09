@@ -38,6 +38,7 @@ COPY ./service .
 RUN go mod tidy
 COPY --from=builder-web /web ./server/router/web
 RUN set -eux;   \
+    export BUILD_DATE="$(date +%Y-%m-%d)";   \
     CGO_ENABLED=1 \
         GOOS=linux \
         go build \
