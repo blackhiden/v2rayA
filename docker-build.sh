@@ -34,13 +34,15 @@ case "$choice" in
     echo "--- Building from Source and Running ---"
 
     # Get Version Information
-    VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
-    COMMIT="$(git rev-parse --short HEAD)"
+    V2RAYA_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
+    V2RAYA_COMMIT="$(git rev-parse --short HEAD)"
+    XCORE_VERSION="$(git -C core/xray describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
+    XCORE_COMMIT="$(git -C core/xray rev-parse --short HEAD)"
     BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     echo "Building with the following info:"
-    echo "  Version: ${VERSION}"
-    echo "  Commit: ${COMMIT}"
+    echo "  Version: ${V2RAYA_VERSION}"
+    echo "  Commit: ${V2RAYA_COMMIT}"
     echo "  Build Date: ${BUILD_DATE}"
     echo "  Image Name: ${IMAGE_NAME}"
     echo "----------------------------------------"
@@ -51,8 +53,10 @@ case "$choice" in
     docker image build \
       -t ${IMAGE_NAME} \
       --no-cache \
-      --build-arg VERSION="${VERSION}" \
-      --build-arg COMMIT="${COMMIT}" \
+      --build-arg V2RAYA_VERSION="${V2RAYA_VERSION}" \
+      --build-arg V2RAYA_VERSION="${V2RAYA_VERSION}" \
+      --build-arg XCORE_COMMIT="${XCORE_COMMIT}" \
+      --build-arg XCORE_COMMIT="${XCORE_COMMIT}" \
       --build-arg BUILD_DATE="${BUILD_DATE}" .
 
     echo "Starting the services..."
