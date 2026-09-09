@@ -32,77 +32,8 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 		"LoggerService",
 	}
 	services = slicex.Uniq(append(services, config.Api.Services...))
-	// observatory
 	if serverData != nil {
-		outbounds := t.outNames()
-		for outbound, isGroup := range outbounds {
-			if !isGroup {
-				continue
-			}
-
-			//TODO: random, leastload
-			strategy := serverData.OutboundName2Setting[outbound].Type
-			interval, err := time.ParseDuration(serverData.OutboundName2Setting[outbound].ProbeInterval)
-			if err != nil {
-				log.Warn("observatory: %v", err)
-				interval = 10 * time.Second
-			}
-			var selector []string
-
-			for _, vi := range serverData.OutboundName2ServerObjs[outbound] {
-				selector = append(selector, GroupWrapper(vi.GetName()))
-			}
-
-			t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
-				Tag:      outbound,
-				Selector: selector,
-				Strategy: coreObj.BalancerStrategy{
-					Type: strategy.String(),
-					Settings: &coreObj.StrategySettings{
-						ObserverTag: outbound,
-					},
-				},
-			})
-
-			if strings.ToLower(strategy.String()) == "leastping" {
-				probeUrl := serverData.OutboundName2Setting[outbound].ProbeURL
-				if _, err := url.Parse(probeUrl); err != nil {
-					log.Warn("observatory: %v", err)
-					probeUrl = "https://gstatic.com/generate_204"
-				}
-
-				// v2raya_core always uses MultiObservatory: one observer per balancer group.
-				if t.MultiObservatory == nil {
-					t.MultiObservatory = &coreObj.MultiObservatory{}
-				}
-				t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
-					Tag: outbound,
-					Settings: coreObj.Observatory{
-						SubjectSelector: selector,
-						PingConfig: &coreObj.PingConfig{
-							Destination: probeUrl,
-							Interval:    interval.String(),
-						},
-						// Keep legacy fields for backward compatibility with older custom cores.
-						ProbeURL:      probeUrl,
-						ProbeInterval: interval.String(),
-					},
-				})
-			}
-		}
-		if t.MultiObservatory != nil || t.Observatory != nil {
-			// v2raya_core supports ObservatoryService via the v2ray-compat gRPC path.
-			if t.Variant == where.V2rayaCore {
-
-				var observatoryTags []string
-				for name, isGroup := range t.outNames() {
-					if isGroup {
-						observatoryTags = append(observatoryTags, name)
-					}
-				}
-				t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(port, observatoryTags))
-			}
-		}
+		t.setBalancerConfiguration(serverData, port)
 	}
 	t.API = &coreObj.APIObject{
 		Tag:      "api-out",
@@ -125,4 +56,75 @@ func (t *Template) SetAPI(serverData *ServerData) (port int, err error) {
 	})
 	t.ApiPort = port
 	return port, nil
+}
+
+// setBalancerConfiguration adds routing balancers and any strategy-specific
+// observatory configuration for enabled proxy groups.
+func (t *Template) setBalancerConfiguration(serverData *ServerData, apiPort int) {
+	if serverData == nil {
+		return
+	}
+	for _, group := range t.balancerGroups {
+		groupTag := group.Tag
+		selector := append([]string(nil), group.Selector...)
+		if len(selector) == 0 {
+			log.Warn("template_api: skipping balancer group %q because no server outbound tags were available", groupTag)
+			continue
+		}
+		outboundName := group.OutboundName
+
+		outboundSetting := serverData.OutboundName2Setting[outboundName]
+		strategy := outboundSetting.LoadBalanceStrategy
+
+		t.Routing.Balancers = append(t.Routing.Balancers, coreObj.Balancer{
+			Tag:      groupTag,
+			Selector: selector,
+			Strategy: coreObj.BalancerStrategy{
+				Type: strategy,
+			},
+		})
+
+		if strings.ToLower(strategy) == "leastping" {
+			interval, err := time.ParseDuration(outboundSetting.ProbeInterval)
+			if err != nil {
+				log.Warn("observatory: invalid duration %q for outbound group %q (key %q), using default 10s: %v",
+					outboundSetting.ProbeInterval, groupTag, outboundName, err)
+				interval = 10 * time.Second
+			}
+			probeUrl := outboundSetting.ProbeURL
+			if _, err := url.Parse(probeUrl); err != nil {
+				log.Warn("observatory: invalid probe URL %q for outbound group %q (key %q), using default %q: %v",
+					probeUrl, groupTag, outboundName, "https://gstatic.com/generate_204", err)
+				probeUrl = "https://gstatic.com/generate_204"
+			}
+
+			// v2raya_core uses one observer per strategy that requires latency data.
+			if t.MultiObservatory == nil {
+				t.MultiObservatory = &coreObj.MultiObservatory{}
+			}
+			t.MultiObservatory.Observers = append(t.MultiObservatory.Observers, coreObj.ObservatoryItem{
+				Tag: groupTag,
+				Settings: coreObj.Observatory{
+					SubjectSelector: selector,
+					PingConfig: &coreObj.PingConfig{
+						Destination: probeUrl,
+						Interval:    interval.String(),
+					},
+					// Keep legacy fields for backward compatibility with older custom cores.
+					ProbeURL:      probeUrl,
+					ProbeInterval: interval.String(),
+				},
+			})
+		}
+	}
+	if t.MultiObservatory != nil || t.Observatory != nil {
+		// v2raya_core supports ObservatoryService via the v2ray-compat gRPC path.
+		if t.Variant == where.V2rayaCore {
+			var observatoryTags []string
+			for _, group := range t.balancerGroups {
+				observatoryTags = append(observatoryTags, group.Tag)
+			}
+			t.ApiCloses = append(t.ApiCloses, ObservatoryProducer(apiPort, observatoryTags))
+		}
+	}
 }

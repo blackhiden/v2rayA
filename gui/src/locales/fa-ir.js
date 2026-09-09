@@ -331,6 +331,12 @@ export default {
     addMessage: "لطفاً نام خروجی را که می خواهید اضافه کنید وارد کنید:",
     deleteMessage:
       'از حذف <b>DELETE</b> اطمینان دارید "{outboundName}"? این عمل غیرقابل بازگشت است',
+    loadBalanceEnabled: "Load balancing",
+    loadBalanceStrategy: "Algorithm",
+    loadBalanceDescription: "Enable this group to distribute new proxy connections evenly across active members. At least two members are required.",
+    loadBalanceStrategies: {
+      roundrobin: "Round robin",
+    },
   },
   log: {
     logModalTitle: "دیدن لاگ ها",

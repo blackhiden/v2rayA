@@ -388,6 +388,13 @@ export default {
     addMessage: "请输入你想要添加的代理分组名称：",
     deleteMessage:
       '确定要<b>删除</b>出站 "{outboundName}" 吗？注意，该操作是不可逆的。',
+    loadBalanceEnabled: "负载均衡",
+    loadBalanceStrategy: "算法",
+    loadBalanceDescription:
+      "启用后，新建代理连接会在此分组的活动成员间均匀分配。至少需要两个成员；已经建立的连接会保留在建立时选中的服务器上。",
+    loadBalanceStrategies: {
+      roundrobin: "轮询（连接均匀交替分配）",
+    },
   },
   proxyGroup: {
     pickTitle: "添加到代理分组",

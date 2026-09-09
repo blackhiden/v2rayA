@@ -201,6 +201,60 @@ The event source provides route selection, not exact per-session byte counters o
 4. **DNS:** Custom rules, anti-pollution
 5. **Logging:** Levels, output destinations
 
+### Outbound Group Configuration
+
+v2rayA supports grouping selected servers into outbound groups. Each group persists an `OutboundSetting` record, including its latency-probe options and an independent load-balancing policy (`loadBalanceEnabled`, `loadBalanceStrategy`).
+
+#### Balancer Groups (Load Balancing)
+
+When a group enables load balancing and has at least two selected members:
+1. **Individual server outbounds:** Each member gets its own Xray outbound configuration with a tag following `『groupName』_N` (for example, `『PROXY』_0` through `『PROXY』_4`).
+2. **Routing balancer:** The template adds `routing.balancers[]` with group tag `『groupName』`, a selector containing those exact member tags, and the group’s selected strategy. The current supported strategy is `roundrobin`.
+3. **Routing integration:** Rules targeting either the raw group name (`PROXY`) or group tag are translated to Xray’s `balancerTag` (`『PROXY』`).
+4. **Disabled or one-member groups:** No Xray balancer is generated; the first selected member remains the ordinary active outbound. Group membership is retained so enabling the policy later does not require re-adding members.
+
+**Configuration Example:**
+```json
+{
+  "outbounds": [
+    {
+      "tag": "『proxy』_0",
+      "protocol": "vmess",
+      "settings": { ... }
+    },
+    {
+      "tag": "『proxy』_1",
+      "protocol": "vmess",
+      "settings": { ... }
+    }
+  ],
+  "routing": {
+    "balancers": [
+      {
+        "tag": "『proxy』",
+        "selector": ["『proxy』_0", "『proxy』_1"],
+        "strategy": { "type": "roundrobin" }
+      }
+    ],
+    "rules": [{ "balancerTag": "『proxy』" }]
+  }
+}
+```
+
+Round robin is connection-level selection: each new proxied connection is assigned to the next selector member. It does not split an established connection across servers and does not itself provide health-based failover.
+
+#### Groups without Load Balancing
+
+When a group policy is disabled, v2rayA preserves the conventional connect behavior and routes through its first selected member. This keeps existing proxy groups backward-compatible while allowing the user to opt in per group.
+
+#### Tag Format
+
+All group-related outbound tags follow the format:
+- Group tag: `『groupName』`
+- Individual server tags: `『groupName』_N` where N is the server index
+
+This consistent tagging ensures proper routing and load balancing functionality.
+
 ### Auto-Update Mechanisms
 1. **Subscription Updates:**
    - Configurable intervals

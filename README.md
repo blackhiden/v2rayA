@@ -28,6 +28,7 @@ We are committed to providing the simplest operation and meeting most needs. Tha
 - **Routing rules:** Powerful routing capabilities based on RoutingA and V2Ray/XRay routing
 - **Containerized:** Official Docker images available
 - **Live Flow Topology:** Experimental SVG diagram of observed routes from source through the selected proxy to destination, excluding the internal `gstatic.com:443` latency probe
+- **Per-proxy-group load balancing:** Enable round-robin distribution for an individual proxy group, with its own persisted algorithm setting
 
 1. Install from apt-source or AUR
 2. Docker
@@ -89,6 +90,10 @@ Select a server and click "Connect". Enable "Transparent Proxy" in settings for 
 ## Configuration
 
 v2rayA configuration is stored in `~/.config/v2raya/` (Linux) or `~/.v2raya/` (macOS/Windows) by default. You can specify a custom config directory using the `--config` flag or `V2RAYA_CONFIG_DIR` environment variable.
+
+### Proxy-group load balancing
+
+Open **Proxy Groups**, expand a group, and select **Configure**. Enable **Load balancing** and select **Round robin** after adding at least two servers to that group. Each new proxy connection is assigned to the next selected group member; existing long-lived connections remain on the server selected when the connection was opened. Disabling the group policy restores ordinary single-server routing without deleting the group’s saved members.
 
 ## Statement
 

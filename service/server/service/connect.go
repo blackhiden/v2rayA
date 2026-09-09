@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/v2rayA/v2rayA/db/configure"
@@ -98,15 +97,18 @@ func Connect(which *configure.Which) (err error) {
 	if which == nil {
 		return fmt.Errorf("which can not be nil")
 	}
-	setting := GetSetting()
 	if err = checkSupport([]*configure.Which{which}); err != nil {
-		if !errors.Is(err, V2OnlyFeatureError) {
-			return err
-		}
+		return err
+	}
+	// A group keeps multiple selected members only when its own load-balancing
+	// policy is enabled. This preserves the historical single-server behavior
+	// for every other proxy group.
+	if !configure.GetOutboundSetting(which.Outbound).LoadBalanceEnabled {
 		if err = configure.ClearConnects(which.Outbound); err != nil {
 			return err
 		}
 	}
+	setting := GetSetting()
 	//configure the ip forward
 	if setting.IpForward != ipforward.IsIpForwardOn() {
 		e := ipforward.WriteIpForward(setting.IpForward)

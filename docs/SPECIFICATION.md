@@ -138,6 +138,44 @@ ip(geoip:private) -> direct
 - JSON configurations
 - Standard subscription formats
 
+### 6. Load Balancing
+
+#### 6.1 Load Balancer Configuration
+
+Load balancing is enabled independently for each proxy group. It distributes new proxy connections across the selected members of that group using the configured algorithm; `roundrobin` is the only currently supported algorithm.
+
+**Configuration Structure:**
+- `OutboundSetting.loadBalanceEnabled` defaults to `false`; `loadBalanceStrategy` defaults to `roundrobin`.
+- An enabled group with two or more selected members creates individual outbounds with tags `『groupName』_0`, `『groupName』_1`, etc.
+- Xray `routing.balancers` contains group tag `『groupName』`, an exact selector of the individual tags, and `strategy.type: "roundrobin"`.
+- Rules that target the raw group name or wrapped group tag use Xray `balancerTag` to select the routing balancer.
+- A disabled or one-member group has no balancer and uses its first selected member as an ordinary outbound.
+
+**Key Implementation Details:**
+- When the policy is enabled for a group with multiple members, the system creates individual outbound configurations and one routing balancer that references all of their tags.
+- The balancer selector must match the actual outbound tags for proper operation
+- The selected Xray round-robin strategy assigns new connections sequentially. Existing connections are not migrated or split across servers.
+
+**Error Handling:**
+- "empty selector list" error occurs if balancer selectors don't match any outbound tags
+- This is prevented by ensuring selector tags use the same format as outbound tags
+
+#### 6.2 Outbound Group Types
+
+1. **Balancer (Load Balancing)**
+    - Opt-in per proxy group; at least two selected members are needed to distribute traffic.
+    - Round-robin distribution is performed by Xray for each new proxy connection.
+    - Changing the group policy regenerates and restarts the active core configuration through the existing outbound settings API.
+
+2. **Selector (Manual Selection)**
+   - Users manually select which server to use
+   - GUI provides server switching interface
+   - Also uses group outbound structure
+
+#### 6.3 Observatory Integration
+
+The round-robin strategy does not require observatory data and does not provide health-based failover. Observatory settings remain available for latency-related strategies that may be added later.
+
 ## User Interface Requirements
 
 ### 1. Dashboard

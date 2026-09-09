@@ -19,12 +19,13 @@ func GroupWrapper(ps string) string {
 }
 
 type ServerData struct {
-	RawServerInfos          []serverInfo
-	ServerInfos             []serverInfo
-	OutboundName2Setting    map[string]configure.OutboundSetting
-	Link2ServerInfos        map[string][]*serverInfo
-	Link2ServerObj          map[string]serverObj.ServerObj
-	OutboundName2ServerObjs map[string][]serverObj.ServerObj
+	RawServerInfos           []serverInfo
+	ServerInfos              []serverInfo
+	OutboundName2Setting     map[string]configure.OutboundSetting
+	OutboundName2ServerInfos map[string][]*serverInfo
+	Link2ServerInfos         map[string][]*serverInfo
+	Link2ServerObj           map[string]serverObj.ServerObj
+	OutboundName2ServerObjs  map[string][]serverObj.ServerObj
 }
 
 func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
@@ -64,17 +65,25 @@ func NewServerData(serverInfos []serverInfo) (serverData *ServerData) {
 	}
 
 	OutboundName2Setting := make(map[string]configure.OutboundSetting)
+	outboundName2ServerInfos := make(map[string][]*serverInfo)
+	for i := range serverInfos {
+		outboundName2ServerInfos[serverInfos[i].OutboundName] = append(
+			outboundName2ServerInfos[serverInfos[i].OutboundName],
+			&serverInfos[i],
+		)
+	}
 	for outbound := range outboundName2ServerObjs {
 		OutboundName2Setting[outbound] = configure.GetOutboundSetting(outbound)
 	}
 
 	return &ServerData{
-		RawServerInfos:          rawServerInfos,
-		ServerInfos:             serverInfos,
-		Link2ServerInfos:        link2ServerInfosAfter,
-		Link2ServerObj:          link2ServerObj,
-		OutboundName2ServerObjs: outboundName2ServerObjs,
-		OutboundName2Setting:    OutboundName2Setting,
+		RawServerInfos:           rawServerInfos,
+		ServerInfos:              serverInfos,
+		OutboundName2ServerInfos: outboundName2ServerInfos,
+		Link2ServerInfos:         link2ServerInfosAfter,
+		Link2ServerObj:           link2ServerObj,
+		OutboundName2ServerObjs:  outboundName2ServerObjs,
+		OutboundName2Setting:     OutboundName2Setting,
 	}
 }
 

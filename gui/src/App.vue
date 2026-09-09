@@ -20,6 +20,7 @@
             @add-outbound="handleAddOutbound"
             @changed="handleGroupChanged"
             @group-deleted="handleGroupDeleted"
+            @configure="handleClickOutboundSetting"
           />
         </b-navbar-item>
       </template>
@@ -492,8 +493,7 @@ export default {
         cancel
       );
     },
-    handleClickOutboundSetting(event, outbound) {
-      event.stopPropagation();
+    handleClickOutboundSetting(outbound) {
       const that = this;
       this.$buefy.modal.open({
         parent: this,

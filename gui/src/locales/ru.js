@@ -339,6 +339,12 @@ export default {
     addMessage: "Введите имя выходного узла, который вы хотите добавить",
     deleteMessage:
       'Вы уверены, что хотите <b>УДАЛИТЬ</b> выходной узел "{outboundName}"? Это нельзя отменить.',
+    loadBalanceEnabled: "Load balancing",
+    loadBalanceStrategy: "Algorithm",
+    loadBalanceDescription: "Enable this group to distribute new proxy connections evenly across active members. At least two members are required.",
+    loadBalanceStrategies: {
+      roundrobin: "Round robin",
+    },
   },
   log: {
     logModalTitle: "Просмотр журнала",

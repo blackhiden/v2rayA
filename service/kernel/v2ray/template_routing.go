@@ -20,15 +20,24 @@ import (
 func (t *Template) outNames() map[string]bool {
 	tags := make(map[string]bool)
 	for _, o := range t.Outbounds {
-		if len(o.Balancers) > 0 {
-			for _, groupName := range o.Balancers {
-				tags[groupName] = true
-			}
-		} else {
-			tags[o.Tag] = false
-		}
+		tags[o.Tag] = false
+	}
+	for _, group := range t.balancerGroups {
+		// Routing rules refer to the group tag, while selector members remain
+		// implementation details of the balancer.
+		tags[group.Tag] = true
+		tags[group.OutboundName] = true
 	}
 	return tags
+}
+
+func (t *Template) balancerTagForOutbound(outboundName string) (string, bool) {
+	for _, group := range t.balancerGroups {
+		if outboundName == group.OutboundName || outboundName == group.Tag {
+			return group.Tag, true
+		}
+	}
+	return "", false
 }
 
 func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGroup bool) bool) (outboundName string, isGroup bool) {
@@ -40,24 +49,28 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 	// deduplicate
 	m := make(map[string]struct{})
 
+	memberToGroup := make(map[string]string)
+	for _, group := range t.balancerGroups {
+		for _, member := range group.Selector {
+			memberToGroup[member] = group.Tag
+		}
+	}
 	for _, o := range t.Outbounds {
 		switch o.Tag {
 		case "direct", "block", "dns-out":
 			continue
 		}
-		if len(o.Balancers) > 0 {
-			for _, v := range o.Balancers {
-				if _, ok := m[v]; !ok {
-					if filter(v, true) {
-						return v, true
-					}
-					m[v] = struct{}{}
+		if groupTag, ok := memberToGroup[o.Tag]; ok {
+			if _, seen := m[groupTag]; !seen {
+				if filter(groupTag, true) {
+					return groupTag, true
 				}
+				m[groupTag] = struct{}{}
 			}
-		} else {
-			if filter(o.Tag, false) {
-				return o.Tag, false
-			}
+			continue
+		}
+		if filter(o.Tag, false) {
+			return o.Tag, false
 		}
 	}
 	return
@@ -68,6 +81,12 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 // Returns (serverLine, []domains). serverLine is empty if server is empty.
 func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds []string) (err error) {
 	firstOutboundTag, _ := t.FirstProxyOutboundName(nil)
+	// Use the actual first outbound/balancer tag, or fallback to "proxy" if none exists
+	// When isGroup is true, firstOutboundTag is a balancer tag which is what we want
+	proxyOutboundTag := firstOutboundTag
+	if proxyOutboundTag == "" {
+		proxyOutboundTag = "proxy"
+	}
 	// apple pushing. #495 #479
 	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
 		Type:        "field",
@@ -82,7 +101,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: proxyOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:geolocation-!cn"},
 				})
@@ -90,7 +109,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: proxyOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -98,7 +117,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: "proxy",
+				OutboundTag: proxyOutboundTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// https://github.com/v2rayA/v2rayA/issues/285
 				Domain: []string{"geosite:google"},
@@ -111,7 +130,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			},
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: "proxy",
+				OutboundTag: proxyOutboundTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				IP:          []string{"geoip:hk", "geoip:mo"},
 			},
@@ -127,13 +146,13 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: proxyOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:gfw"},
 				},
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: proxyOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:greatfire"},
 				})
@@ -141,7 +160,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: firstOutboundTag,
+					OutboundTag: proxyOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -150,7 +169,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: firstOutboundTag,
+				OutboundTag: proxyOutboundTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// From: https://github.com/Loyalsoldier/geoip/blob/release/text/telegram.txt
 				IP: []string{"91.105.192.0/23", "91.108.4.0/22", "91.108.8.0/21", "91.108.16.0/21", "91.108.56.0/22",
@@ -565,10 +584,10 @@ func (t *Template) setWhitelistRouting(whitelist []Addr) {
 }
 
 func (t *Template) setGroupRouting() {
-	outbounds := t.outNames()
 	for i := range t.Routing.Rules {
-		if t.Routing.Rules[i].OutboundTag != "" && outbounds[t.Routing.Rules[i].OutboundTag] == true {
-			t.Routing.Rules[i].BalancerTag, t.Routing.Rules[i].OutboundTag = t.Routing.Rules[i].OutboundTag, ""
+		if balancerTag, ok := t.balancerTagForOutbound(t.Routing.Rules[i].OutboundTag); ok {
+			t.Routing.Rules[i].BalancerTag = balancerTag
+			t.Routing.Rules[i].OutboundTag = ""
 		}
 	}
 }

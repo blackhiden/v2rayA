@@ -42,6 +42,33 @@ This document outlines the current development roadmap, known issues, technical 
    - [ ] Improve error handling consistency
    - [ ] Fix platform-specific edge cases
 
+### Completed Features
+
+- ✅ **Per-proxy-group load balancing (Round Robin)**
+  - Each proxy group persists its own enabled flag and algorithm; the global Settings toggle was removed.
+  - Enabled groups with two or more members generate one Xray routing balancer with exact member selector tags (for example, `『PROXY』_0` through `『PROXY』_4`).
+  - The group settings UI exposes an on/off switch and an algorithm selector, currently offering round robin.
+  - Group routing is translated to the Xray balancer tag, so all new proxied connections are distributed sequentially across that group’s active members.
+
+### Advanced Options (Future Work)
+
+- [ ] **Advanced Load Balancing Algorithms**
+  - [ ] Weighted round-robin
+  - [ ] Least connections
+  - [ ] IP hash / session persistence
+  - [ ] Latency-based selection
+  - [ ] Custom weighting per server
+
+- [ ] **Multi-node Load Balancing**
+  - [ ] Distributed load balancing across multiple v2rayA instances
+  - [ ] Centralized configuration management
+  - [ ] Health check coordination
+
+- [ ] **Load Balancing Analytics**
+  - [ ] Traffic distribution statistics
+  - [ ] Server performance metrics
+  - [ ] Load balancing effectiveness reports
+
 ### Medium Priority
 
 1. **UI/UX Improvements**
@@ -189,6 +216,11 @@ This document outlines the current development roadmap, known issues, technical 
    - Workaround: Use Linux for full features
    - Status: Feature parity planned
 
+3. **Load Balancer Grouping and Selector Mismatch** (resolved 2026-09-09)
+   - The former global implementation grouped by server object instead of proxy-group name, so a group of different servers could not produce one complete selector and could emit invalid balancer metadata.
+   - Fix: Build an Xray routing balancer from all selected members sharing the outbound-group name, with exact `『groupName』_N` member tags and raw-name-to-balancer routing translation.
+   - Status: Resolved
+
 ### Low
 
 1. **UI Responsiveness**
@@ -211,9 +243,9 @@ This document outlines the current development roadmap, known issues, technical 
    - Status: Design phase
 
 2. **Multi-server Load Balancing**
-   - Distribute traffic across servers
+   - Per-proxy-group round-robin distribution is complete; advanced algorithms and analytics remain planned.
    - Priority: Medium
-   - Status: Evaluation
+   - Status: Initial implementation complete
 
 3. **Protocol Compression**
    - Reduce bandwidth usage

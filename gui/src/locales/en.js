@@ -140,6 +140,7 @@ export default {
     logLevel: "Log Level",
     pacMode: "Traffic Splitting Mode of Rule Port",
     mux: "Multiplex",
+    loadBalance: "Load Balancing",
     autoUpdateSub: "Automatically Update Subscriptions",
     autoUpdateGfwlist: "Automatically Update GFWList",
     preferModeWhenUpdate: "Mode when Update Subscriptions and GFWList",
@@ -189,6 +190,7 @@ export default {
       backendSystemDefault: "System Default",
     },
     messages: {
+      loadBalance: "When enabled, incoming workload connections are distributed evenly across active servers using round robin. Available servers are based on health checks.",
       inboundSniffing: "Sniff inbound traffic. If it is not turned on, some traffic may not be diverted correctly.",
       gfwlist:
         "Based on modified time of file which sometimes is after latest version online.",
@@ -396,6 +398,13 @@ export default {
     addMessage: "Please input the proxy group name you want to add:",
     deleteMessage:
       'Be sure to <b>DELETE</b> the outbound "{outboundName}"? It is not reversible.',
+    loadBalanceEnabled: "Load balancing",
+    loadBalanceStrategy: "Algorithm",
+    loadBalanceDescription:
+      "Enable this group to distribute new proxy connections evenly among its active members. At least two members are required. Existing connections remain on the server chosen when they were opened.",
+    loadBalanceStrategies: {
+      roundrobin: "Round robin (evenly alternate connections)",
+    },
   },
   proxyGroup: {
     pickTitle: "Add to Proxy Group",
