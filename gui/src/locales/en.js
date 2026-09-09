@@ -398,6 +398,13 @@ export default {
     addMessage: "Please input the proxy group name you want to add:",
     deleteMessage:
       'Be sure to <b>DELETE</b> the outbound "{outboundName}"? It is not reversible.',
+    loadBalanceEnabled: "Load balancing",
+    loadBalanceStrategy: "Algorithm",
+    loadBalanceDescription:
+      "Enable this group to distribute new proxy connections evenly among its active members. At least two members are required. Existing connections remain on the server chosen when they were opened.",
+    loadBalanceStrategies: {
+      roundrobin: "Round robin (evenly alternate connections)",
+    },
   },
   proxyGroup: {
     pickTitle: "Add to Proxy Group",

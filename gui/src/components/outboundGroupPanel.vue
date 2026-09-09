@@ -62,6 +62,14 @@
                 @click.stop="openNodePicker(outbound)"
               >{{ $t("operations.addTo") }}</b-button>
               <b-button
+                size="is-small"
+                type="is-info"
+                outlined
+                icon-left="settings"
+                style="margin-left: 6px"
+                @click.stop="$emit('configure', outbound)"
+              >{{ $t("operations.configure") }}</b-button>
+              <b-button
                 v-if="outbound !== 'proxy'"
                 size="is-small"
                 type="is-danger"

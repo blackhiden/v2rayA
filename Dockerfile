@@ -11,8 +11,9 @@ RUN yarn cache clean && yarn && yarn build
 FROM --platform=$BUILDPLATFORM golang:trixie AS builder
 WORKDIR /app
 # Define the build arguments passed from GitHub Actions
-ARG APP_VERSION=v0.0.0
-ARG APP_COMMIT=unknown
+ARG V2RAYA_VERSION=v0.0.0
+ARG V2RAYA_COMMIT=unknown
+ARG BUILD_DATE=unknown
 RUN set -eux;     \
     apt update -y; \
     apt install -y --no-install-recommends       \
@@ -37,20 +38,20 @@ COPY ./service .
 RUN go mod tidy
 COPY --from=builder-web /web ./server/router/web
 RUN set -eux;   \
-    export BUILD_DATE="$(date +%Y-%m-%d)";   \
     CGO_ENABLED=1 \
         GOOS=linux \
         go build \
             -buildvcs=false \
-            -ldflags="-s -w -X 'main.Version=${APP_VERSION}' -X 'main.Commit=${APP_COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
+            -ldflags="-s -w -X 'main.Version=${V2RAYA_VERSION}' -X 'main.Commit=${V2RAYA_COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
             -o ./v2raya . ;  \
     chmod +x ./v2raya
 
 FROM --platform=$BUILDPLATFORM golang:trixie AS builder_core
 WORKDIR /app
 # Define the build arguments passed from GitHub Actions
-ARG APP_VERSION=v0.0.0
-ARG APP_COMMIT=unknown
+ARG XCORE_VERSION=v0.0.0
+ARG XCORE_COMMIT=unknown
+ARG BUILD_DATE=unknown
 RUN set -eux;     \
     apt update -y; \
     apt install -y --no-install-recommends       \
@@ -79,7 +80,7 @@ RUN set -eux;   \
         GOOS=linux \
         go build \
             -buildvcs=false \
-            -ldflags="-s -w -X 'main.Version=${APP_VERSION}' -X 'main.Commit=${APP_COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
+            -ldflags="-s -w -X 'main.Version=${XCORE_VERSION}' -X 'main.Commit=${XCORE_COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" \
             -o ./v2raya_core ./main ;  \
     chmod +x ./v2raya_core
 

@@ -32,13 +32,23 @@ type Template struct {
 	// DnsModuleConfig 是新 DNS 模块的配置，由 v2raya-core 启动时解析并启动 DNS 监听器。
 	DnsModuleConfig json.RawMessage `json:"dns_module,omitempty"`
 
-	Variant       where.Variant          `json:"-"`
-	CoreVersion   string                 `json:"-"`
-	OutboundTags  []string               `json:"-"`
-	ApiCloses     []func()               `json:"-"`
-	ApiPort       int                    `json:"-"`
-	Setting       *configure.Setting     `json:"-"`
-	serverInfoMap map[string]*serverInfo `json:"-"` // outbound tag -> server info
+	Variant        where.Variant          `json:"-"`
+	CoreVersion    string                 `json:"-"`
+	OutboundTags   []string               `json:"-"`
+	ApiCloses      []func()               `json:"-"`
+	ApiPort        int                    `json:"-"`
+	Setting        *configure.Setting     `json:"-"`
+	serverInfoMap  map[string]*serverInfo `json:"-"` // outbound tag -> server info
+	balancerGroups []balancerGroup        `json:"-"`
+}
+
+// balancerGroup is the internal representation of one enabled proxy-group
+// balancer. Its members are ordinary Xray outbounds; the group itself exists
+// only as a routing balancer tag and must not be serialized as an outbound.
+type balancerGroup struct {
+	Tag          string
+	OutboundName string
+	Selector     []string
 }
 
 func (t *Template) Close() error {
@@ -150,7 +160,11 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	t.updatePrivateRouting()
 
 	// add spare tire outbound routing. Fix: https://github.com/v2rayA/v2rayA/issues/447
-	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: "proxy"})
+	firstOutbound, _ := t.FirstProxyOutboundName(nil)
+	if firstOutbound == "" {
+		firstOutbound = "proxy" // fallback if no outbounds configured
+	}
+	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: firstOutbound})
 
 	// Set group routing. This should be put in the end of routing setters.
 	t.setGroupRouting()

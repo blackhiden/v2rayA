@@ -6,6 +6,36 @@
       </p>
     </header>
     <section class="modal-card-body">
+      <b-message type="is-info" :closable="false">
+        {{ $t("outbound.loadBalanceDescription") }}
+      </b-message>
+      <b-field
+        :label="$t('outbound.loadBalanceEnabled')"
+        label-position="on-border"
+      >
+        <b-switch v-model="setting.loadBalanceEnabled" type="is-primary">
+          {{
+            setting.loadBalanceEnabled
+              ? $t("setting.options.on")
+              : $t("setting.options.off")
+          }}
+        </b-switch>
+      </b-field>
+      <b-field
+        :label="$t('outbound.loadBalanceStrategy')"
+        label-position="on-border"
+      >
+        <b-select
+          v-model="setting.loadBalanceStrategy"
+          :disabled="!setting.loadBalanceEnabled"
+          expanded
+        >
+          <option value="roundrobin">
+            {{ $t("outbound.loadBalanceStrategies.roundrobin") }}
+          </option>
+        </b-select>
+      </b-field>
+      <hr class="dropdown-divider" />
       <b-field label="ProbeURL" label-position="on-border">
         <b-input ref="probe_url" v-model="setting.probeURL" required expanded />
       </b-field>
@@ -61,6 +91,8 @@ export default {
       probeURL: "",
       probeInterval: "",
       type: "",
+      loadBalanceEnabled: false,
+      loadBalanceStrategy: "roundrobin",
     },
     backendReady: false,
   }),
@@ -98,7 +130,7 @@ export default {
     handleClickSubmit() {
       let valid = true;
       for (let k in this.$refs) {
-        if (!this.$refs.hasOwnProperty(k)) {
+        if (!Object.prototype.hasOwnProperty.call(this.$refs, k)) {
           continue;
         }
         let x = this.$refs[k];
@@ -107,7 +139,6 @@ export default {
         }
         if (
           x.$el.offsetParent && // is visible
-          x.hasOwnProperty("checkHtml5Validity") &&
           typeof x.checkHtml5Validity === "function" &&
           !x.checkHtml5Validity()
         ) {
@@ -118,7 +149,6 @@ export default {
       if (!valid) {
         return;
       }
-      const that = this;
       this.$axios({
         url: apiRoot + "/outbound",
         method: "put",

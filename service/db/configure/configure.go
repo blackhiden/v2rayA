@@ -445,6 +445,9 @@ func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
 	if _, err := time.ParseDuration(setting.ProbeInterval); err != nil {
 		return err
 	}
+	if setting.LoadBalanceStrategy, err = NormalizeLoadBalanceStrategy(setting.LoadBalanceStrategy); err != nil {
+		return err
+	}
 	return db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting)
 }
 
@@ -452,6 +455,12 @@ func GetOutboundSetting(outbound string) (setting OutboundSetting) {
 	err := db.Get(fmt.Sprintf("outbound.%v", outbound), "setting", &setting)
 	if err != nil {
 		return DefaultOutboundSetting()
+	}
+	// The fields were added after outbound settings already existed. An empty
+	// strategy therefore denotes a persisted pre-load-balancing setting.
+	setting.LoadBalanceStrategy, err = NormalizeLoadBalanceStrategy(setting.LoadBalanceStrategy)
+	if err != nil {
+		setting.LoadBalanceStrategy = LoadBalanceStrategyRoundRobin
 	}
 	return setting
 }
