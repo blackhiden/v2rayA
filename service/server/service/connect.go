@@ -103,8 +103,13 @@ func Connect(which *configure.Which) (err error) {
 		if !errors.Is(err, V2OnlyFeatureError) {
 			return err
 		}
-		if err = configure.ClearConnects(which.Outbound); err != nil {
-			return err
+		// When load balancing is enabled, don't clear existing connections
+		// This allows multiple servers to share the same outbound name
+		// The v2ray template will create a balancer for round-robin distribution
+		if !setting.LoadBalance {
+			if err = configure.ClearConnects(which.Outbound); err != nil {
+				return err
+			}
 		}
 	}
 	//configure the ip forward
