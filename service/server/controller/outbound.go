@@ -7,15 +7,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/v2rayA/v2rayA/common"
-	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/v2ray"
 	"github.com/v2rayA/v2rayA/server/service"
 )
 
 func GetOutbounds(ctx *gin.Context) {
 	outbounds := configure.GetOutbounds()
 	common.ResponseSuccess(ctx, gin.H{
-		"outbounds": outbounds,
+		"outbounds":          outbounds,
+		"activeOutboundName": configure.GetActiveOutboundName(),
 	})
 }
 
@@ -61,6 +62,54 @@ func PutOutbound(ctx *gin.Context) {
 		}
 	}
 	common.ResponseSuccess(ctx, nil)
+}
+
+func SetActiveOutbound(ctx *gin.Context) {
+	updatingMu.Lock()
+	if updating {
+		common.ResponseError(ctx, processingErr)
+		updatingMu.Unlock()
+		return
+	}
+	updating = true
+	updatingMu.Unlock()
+	defer func() {
+		updatingMu.Lock()
+		updating = false
+		updatingMu.Unlock()
+	}()
+
+	var data struct {
+		ActiveOutboundName string `json:"activeOutboundName"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+	data.ActiveOutboundName = strings.TrimSpace(data.ActiveOutboundName)
+	if data.ActiveOutboundName == "" {
+		common.ResponseError(ctx, logError("bad request"))
+		return
+	}
+
+	previous := configure.GetActiveOutboundName()
+	if err := configure.SetActiveOutboundName(data.ActiveOutboundName); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	if v2ray.ProcessManager.Running() && configure.GetConnectedServers().Len() > 0 {
+		if err := v2ray.UpdateV2RayConfig(); err != nil {
+			if rollbackErr := configure.SetActiveOutboundName(previous); rollbackErr != nil {
+				common.ResponseError(ctx, fmt.Errorf("invalid config: %w; failed to restore active outbound: %v", err, rollbackErr))
+				return
+			}
+			_ = v2ray.UpdateV2RayConfig()
+			common.ResponseError(ctx, fmt.Errorf("invalid config: %w", err))
+			return
+		}
+	}
+
+	common.ResponseSuccess(ctx, gin.H{"activeOutboundName": data.ActiveOutboundName})
 }
 
 func DeleteOutbound(ctx *gin.Context) {
@@ -220,8 +269,8 @@ func PostBulkRemoveByLatency(ctx *gin.Context) {
 	}()
 
 	var data struct {
-		Outbound      string `json:"outbound"`
-		MaxLatencyMs  int    `json:"maxLatencyMs"`
+		Outbound       string `json:"outbound"`
+		MaxLatencyMs   int    `json:"maxLatencyMs"`
 		ServersToCheck []struct {
 			ID        int    `json:"id"`
 			TYPE      string `json:"_type"`
@@ -319,8 +368,8 @@ func PostBulkRemoveByLatency(ctx *gin.Context) {
 
 	// Return summary
 	common.ResponseSuccess(ctx, gin.H{
-		"removedCount": len(removeSet),
+		"removedCount":   len(removeSet),
 		"remainingCount": len(remaining),
-		"outbound": data.Outbound,
+		"outbound":       data.Outbound,
 	})
 }

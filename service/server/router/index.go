@@ -299,9 +299,10 @@ func Run() error {
 		auth.GET("outbound", controller.GetOutbound)
 		auth.POST("outbound", controller.PostOutbound)
 		auth.PUT("outbound", controller.PutOutbound)
-	auth.PUT("outboundConnections", controller.PutOutboundConnections)
-	auth.POST("bulkRemoveByLatency", controller.PostBulkRemoveByLatency)
-	auth.DELETE("outbound", controller.DeleteOutbound)
+		auth.PUT("outbound/active", controller.SetActiveOutbound)
+		auth.PUT("outboundConnections", controller.PutOutboundConnections)
+		auth.POST("bulkRemoveByLatency", controller.PostBulkRemoveByLatency)
+		auth.DELETE("outbound", controller.DeleteOutbound)
 		auth.GET("message", controller.WsMessage)
 		auth.GET("live-flow", controller.WsLiveFlow)
 		auth.GET("logger", controller.GetLogger)
@@ -332,7 +333,6 @@ func Run() error {
 			return fmt.Errorf("router: failed to listen on %v: %w", addr, err)
 		}
 	}
-
 
 	srv := &http.Server{Handler: engine}
 	httpServerMu.Lock()

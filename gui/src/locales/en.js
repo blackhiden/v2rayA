@@ -410,6 +410,18 @@ export default {
     pickTitle: "Add to Proxy Group",
     pickMessage: "Choose the proxy group this node should join.",
     group: "Proxy Group",
+    activeGroupPanelTitle: "Proxy Groups",
+    activeGroupTab: "PROXY GROUP",
+    activeGroupLabel: "Active Proxy Group",
+    activeGroupPanelSubtitle:
+      "Choose the group used for new default proxy connections.",
+    activeGroupSaving: "Saving active group...",
+    activeGroupUpdated: "Active proxy group updated",
+    members: "Members",
+    active: "Active",
+    inactive: "Inactive",
+    status: "Status",
+    selectActiveGroup: "Use {group} as the active proxy group",
   },
   log: {
     logModalTitle: "View logs",
