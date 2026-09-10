@@ -76,14 +76,45 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 	return
 }
 
+// ActiveProxyOutboundName resolves the saved active group to an outbound tag in
+// this template. A selected group without connected members cannot be emitted,
+// so it falls back to the first configured proxy outbound until that group has
+// members again.
+func (t *Template) ActiveProxyOutboundName() string {
+	return t.activeProxyOutboundName(configure.GetActiveOutboundName())
+}
+
+func (t *Template) activeProxyOutboundName(activeOutbound string) string {
+	if balancerTag, ok := t.balancerTagForOutbound(activeOutbound); ok {
+		return balancerTag
+	}
+	for _, outbound := range t.Outbounds {
+		if outbound.Tag == activeOutbound {
+			return activeOutbound
+		}
+	}
+	firstOutbound, _ := t.FirstProxyOutboundName(nil)
+	return firstOutbound
+}
+
+// DefaultProxyOutboundName translates the reserved RoutingA "proxy" target to
+// the selected active group. Named outbound groups remain explicit targets.
+func (t *Template) DefaultProxyOutboundName(outbound string) string {
+	return t.defaultProxyOutboundName(outbound, configure.GetActiveOutboundName())
+}
+
+func (t *Template) defaultProxyOutboundName(outbound, activeOutbound string) string {
+	if outbound == configure.DefaultOutboundName {
+		return t.activeProxyOutboundName(activeOutbound)
+	}
+	return outbound
+}
+
 // dnsRuleToLines converts a configure.DnsRule to the "server -> outbound" line format
 // and the domain list used for the DNS server object.
 // Returns (serverLine, []domains). serverLine is empty if server is empty.
 func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds []string) (err error) {
-	firstOutboundTag, _ := t.FirstProxyOutboundName(nil)
-	// Use the actual first outbound/balancer tag, or fallback to "proxy" if none exists
-	// When isGroup is true, firstOutboundTag is a balancer tag which is what we want
-	proxyOutboundTag := firstOutboundTag
+	proxyOutboundTag := t.ActiveProxyOutboundName()
 	if proxyOutboundTag == "" {
 		proxyOutboundTag = "proxy"
 	}
@@ -216,7 +247,7 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 		log.Warn("parseRoutingA: %v", err)
 		return err
 	}
-	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
+	defaultOutbound := t.ActiveProxyOutboundName()
 	for _, rule := range rules {
 		switch rule := rule.(type) {
 		case RoutingA.Define:
@@ -307,8 +338,9 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 			case "default":
 				switch v := rule.Value.(type) {
 				case string:
-					defaultOutbound = v
-					if _, ok := outboundTags[v]; !ok {
+					target := t.DefaultProxyOutboundName(v)
+					defaultOutbound = target
+					if _, ok := outboundTags[target]; !ok {
 						return fmt.Errorf(`your RoutingA rules depend on the outbound "%v", thus you should select at least one server in this outbound`, v)
 					}
 				}
@@ -316,7 +348,7 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 		case RoutingA.Routing:
 			rr := deepcopy.Copy(coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: rule.Out,
+				OutboundTag: t.DefaultProxyOutboundName(rule.Out),
 				InboundTag:  routingInboundTags,
 			}).(coreObj.RoutingRule)
 			for _, f := range rule.And {
@@ -484,7 +516,7 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 }
 
 func (t *Template) setTransparentRouting() (err error) {
-	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
+	defaultOutbound := t.ActiveProxyOutboundName()
 	switch t.Setting.Transparent {
 	case configure.TransparentProxy:
 		// Global transparent: route all transparent inbound to default outbound

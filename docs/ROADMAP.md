@@ -50,6 +50,11 @@ This document outlines the current development roadmap, known issues, technical 
   - The group settings UI exposes an on/off switch and an algorithm selector, currently offering round robin.
   - Group routing is translated to the Xray balancer tag, so all new proxied connections are distributed sequentially across that group’s active members.
 
+- ✅ **Active Proxy Group Selection**
+  - The **PROXY GROUP** node tab lists every group in a table with a radio button, member count, and active status.
+  - One validated group is always active; missing or deleted selections recover to the built-in `proxy` group.
+  - The persisted selection drives default, transparent, and reserved RoutingA `proxy` routing, while explicit named routes remain unchanged.
+
 ### Advanced Options (Future Work)
 
 - [ ] **Advanced Load Balancing Algorithms**
@@ -303,4 +308,4 @@ This roadmap is reviewed quarterly and updated based on:
 - Technical feasibility
 - Resource availability
 
-Last updated: 2026-08-27
+Last updated: 2026-09-10

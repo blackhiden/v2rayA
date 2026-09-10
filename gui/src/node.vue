@@ -894,6 +894,30 @@
         <b-tab-item label="LIVE FLOW">
           <LiveFlowDashboard />
         </b-tab-item>
+        <b-tab-item :label="$t('proxyGroup.activeGroupTab')">
+          <section class="table-panel table-panel--proxygroups">
+            <header class="table-panel__header">
+              <div class="table-panel__heading">
+                <b-icon icon="account-group" size="is-small" />
+                <div>
+                  <h2>{{ $t('proxyGroup.activeGroupPanelTitle') }}</h2>
+                  <p>{{ $t('proxyGroup.activeGroupPanelSubtitle') }}</p>
+                </div>
+              </div>
+              <b-tag class="table-panel__count" type="is-primary" rounded>
+                {{ outbounds.length }}
+              </b-tag>
+            </header>
+            <div class="table-panel__content">
+              <ProxyGroupPanel
+                :groups="outbounds"
+                :active-group="activeOutboundName"
+                :member-counts="outboundMemberCounts"
+                @selected="handleActiveOutboundSelected"
+              />
+            </div>
+          </section>
+        </b-tab-item>
       </b-tabs>
     </div>
     <b-loading v-else :is-full-page="true" :active="true">
@@ -1055,13 +1079,14 @@ import ModalPickProxyGroup from "@/components/modalPickProxyGroup";
 import modalBulkAddByLatency from "@/components/modalBulkAddByLatency";
 import modalBulkRemoveByLatency from "@/components/modalBulkRemoveByLatency";
 import LiveFlowDashboard from "@/components/liveFlowDashboard";
+import ProxyGroupPanel from "@/components/ProxyGroupPanel";
 import { waitingConnected } from "@/assets/js/networkInspect";
 import axios from "@/plugins/axios";
 import dayjs from "dayjs";
 
 export default {
   name: "Node",
-  components: { ModalSubscription, ModalServer, LiveFlowDashboard },
+  components: { ModalSubscription, ModalServer, LiveFlowDashboard, ProxyGroupPanel },
   filters: {
     unix2datetime(x) {
       x = dayjs.unix(x);
@@ -1084,6 +1109,10 @@ export default {
       default() {
         return ["proxy"];
       },
+    },
+    activeOutboundName: {
+      type: String,
+      default: "proxy",
     },
     observatory: {
       type: Object,
@@ -1133,6 +1162,20 @@ export default {
     };
   },
   computed: {
+    outboundMemberCounts() {
+      const counts = {};
+      for (const group of this.outbounds) {
+        counts[group] = 0;
+      }
+      const connectedServers = this.runningState.connectedServer || [];
+      for (const server of connectedServers) {
+        const group = server.outbound || "proxy";
+        if (Object.prototype.hasOwnProperty.call(counts, group)) {
+          counts[group]++;
+        }
+      }
+      return counts;
+    },
     loadBalanceValid() {
       return localStorage["loadBalanceValid"] === "true";
     },
@@ -1277,6 +1320,10 @@ export default {
     }
   },
   methods: {
+    handleActiveOutboundSelected(activeOutboundName) {
+      this.$emit("active-outbound-selected", activeOutboundName);
+      this.syncLatestNodeOverview();
+    },
     getRowClass(row) {
       return row.disableReason ? "is-disabled-row" : "";
     },

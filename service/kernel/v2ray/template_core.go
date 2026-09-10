@@ -160,11 +160,11 @@ func NewTemplate(serverInfos []serverInfo, setting *configure.Setting) (t *Templ
 	t.updatePrivateRouting()
 
 	// add spare tire outbound routing. Fix: https://github.com/v2rayA/v2rayA/issues/447
-	firstOutbound, _ := t.FirstProxyOutboundName(nil)
-	if firstOutbound == "" {
-		firstOutbound = "proxy" // fallback if no outbounds configured
+	defaultOutbound := t.ActiveProxyOutboundName()
+	if defaultOutbound == "" {
+		defaultOutbound = configure.DefaultOutboundName
 	}
-	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: firstOutbound})
+	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{Type: "field", Port: "0-65535", OutboundTag: defaultOutbound})
 
 	// Set group routing. This should be put in the end of routing setters.
 	t.setGroupRouting()

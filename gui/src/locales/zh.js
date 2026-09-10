@@ -400,6 +400,17 @@ export default {
     pickTitle: "添加到代理分组",
     pickMessage: "选择要加入的代理分组。",
     group: "代理分组",
+    activeGroupPanelTitle: "代理分组",
+    activeGroupTab: "代理分组",
+    activeGroupLabel: "活动代理分组",
+    activeGroupPanelSubtitle: "选择当前活动的代理分组",
+    activeGroupSaving: "正在保存活动代理分组...",
+    activeGroupUpdated: "活动代理分组已更新",
+    members: "成员",
+    active: "活动",
+    inactive: "未活动",
+    status: "状态",
+    selectActiveGroup: "使用 {group} 作为活动代理分组",
   },
   driver: {
     welcome: [
