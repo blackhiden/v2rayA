@@ -412,6 +412,20 @@ func GetOutbounds() (outbounds []string) {
 	return
 }
 
+// IsOutbound reports whether name is a configured outbound group.
+func IsOutbound(name string) bool {
+	return isOutbound(name, GetOutbounds())
+}
+
+func isOutbound(name string, outbounds []string) bool {
+	for _, outbound := range outbounds {
+		if outbound == name {
+			return true
+		}
+	}
+	return false
+}
+
 // InitDefaultOutbound ensures the default "proxy" outbound group exists in the database.
 // It should be called during system initialization.
 func InitDefaultOutbound() error {
@@ -448,7 +462,10 @@ func SetOutboundSetting(outbound string, setting OutboundSetting) (err error) {
 	if setting.LoadBalanceStrategy, err = NormalizeLoadBalanceStrategy(setting.LoadBalanceStrategy); err != nil {
 		return err
 	}
-	return db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting)
+	if err = db.Set(fmt.Sprintf("outbound.%v", outbound), "setting", setting); err != nil {
+		return err
+	}
+	return nil
 }
 
 func GetOutboundSetting(outbound string) (setting OutboundSetting) {
@@ -470,6 +487,38 @@ func RemoveOutbound(outbound string) (err error) {
 		return err
 	}
 	return db.SetRemove("outbounds", "names", outbound)
+}
+
+// SetActiveOutboundName persists the active outbound name. The name must refer
+// to an existing outbound group so default routing can always resolve it.
+func SetActiveOutboundName(name string) error {
+	if !IsOutbound(name) {
+		return fmt.Errorf("outbound group %q does not exist", name)
+	}
+	return db.Set("system_config", "active_outbound", name)
+}
+
+// GetActiveOutboundName returns the persisted active outbound name. Missing,
+// empty, or stale values are repaired to the permanent default proxy group so
+// one active outbound always exists after imports and group deletion.
+func GetActiveOutboundName() string {
+	var name string
+	if err := db.Get("system_config", "active_outbound", &name); err == nil {
+		if activeOutbound := normalizeActiveOutboundName(name, GetOutbounds()); activeOutbound == name {
+			return name
+		}
+	}
+	if err := db.Set("system_config", "active_outbound", DefaultOutboundName); err != nil {
+		log.Warn("GetActiveOutboundName: failed to persist default outbound: %v", err)
+	}
+	return DefaultOutboundName
+}
+
+func normalizeActiveOutboundName(name string, outbounds []string) string {
+	if isOutbound(name, outbounds) {
+		return name
+	}
+	return DefaultOutboundName
 }
 
 func SetAccount(username, password string) (err error) {

@@ -77,7 +77,15 @@
         </b-dropdown>
       </template>
     </b-navbar>
-    <node ref="nodeRef" v-model="runningState" :outbound="outboundName" :outbounds="outbounds" :observatory="observatory" />
+    <node
+      ref="nodeRef"
+      v-model="runningState"
+      :outbound="outboundName"
+      :outbounds="outbounds"
+      :active-outbound-name="activeOutboundName"
+      :observatory="observatory"
+      @active-outbound-selected="activeOutboundName = $event"
+    />
     <b-modal :active.sync="showCustomPorts" has-modal-card trap-focus aria-role="dialog" aria-modal
       class="modal-custom-ports">
       <ModalCustomAddress @close="showCustomPorts = false" />
@@ -134,6 +142,7 @@ export default {
         { code: "pt_BR", label: "Português-Brasil", flag: "pt" },
       ],
       outboundName: "proxy",
+      activeOutboundName: "proxy",
       outbounds: ["proxy"],
       outboundDropdownHover: {},
       updateOutboundDropdown: true,
@@ -256,6 +265,9 @@ export default {
     }).then((res) => {
       if (res.data.code === "SUCCESS") {
         this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
+        this.activeOutboundName = this.normalizeActiveOutbound(
+          res.data.data.activeOutboundName
+        );
       }
     }).catch(() => {
       // 静默处理认证错误（如 token 过期），避免触发 axios 401 拦截器弹出登录框
@@ -368,6 +380,9 @@ export default {
       if (!this.outbounds.includes(this.outboundName)) {
         this.outboundName = "proxy";
       }
+      this.activeOutboundName = this.normalizeActiveOutbound(
+        this.activeOutboundName
+      );
     },
     normalizeOutbounds(outbounds) {
       const seen = new Set();
@@ -389,6 +404,9 @@ export default {
         normalized.unshift("proxy");
       }
       return normalized;
+    },
+    normalizeActiveOutbound(outbound) {
+      return this.outbounds.includes(outbound) ? outbound : "proxy";
     },
     outboundNameDecorator(outbound) {
       if (this.runningState.outboundToServerName[outbound]) {
@@ -432,6 +450,9 @@ export default {
                   queue: false,
                 });
                 this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
+                this.activeOutboundName = this.normalizeActiveOutbound(
+                  res.data.data.activeOutboundName
+                );
               } else {
                 this.$buefy.toast.open({
                   message: res.data.message,
@@ -470,6 +491,9 @@ export default {
               queue: false,
             });
             this.outbounds = this.normalizeOutbounds(res.data.data.outbounds);
+            this.activeOutboundName = this.normalizeActiveOutbound(
+              res.data.data.activeOutboundName
+            );
             if (this.outboundName === outbound) {
               this.outboundName = "proxy";
             }

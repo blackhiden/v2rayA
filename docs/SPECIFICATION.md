@@ -160,19 +160,30 @@ Load balancing is enabled independently for each proxy group. It distributes new
 - "empty selector list" error occurs if balancer selectors don't match any outbound tags
 - This is prevented by ensuring selector tags use the same format as outbound tags
 
-#### 6.2 Outbound Group Types
+#### 6.2 Active Proxy Group
+
+The active proxy group is the single default group for new proxy connections. It is independent of the group currently being viewed or edited in the group-management menu.
+
+- The node section includes a **PROXY GROUP** tab containing a table of every configured group, its connected-member count, status, and one radio button per row.
+- Exactly one group is selected. The permanent built-in `proxy` group is the default and is restored when no saved value exists or the saved group no longer exists.
+- The persisted `active_outbound` value in `system_config` must name an existing outbound group. `GET /api/outbounds` returns it as `activeOutboundName`; authenticated `PUT /api/outbound/active` accepts `{ "activeOutboundName": "groupName" }` and rejects blank or unknown names.
+- Changing the selection regenerates the running core configuration. If regeneration fails, the server restores the previous saved selection and reports the failure.
+- A selected group with no connected members remains selected but cannot be emitted as an Xray outbound; generated default routing temporarily falls back to the first connected group.
+- Default proxy routing, transparent proxy routing, and the reserved RoutingA `proxy` target resolve to the active group. Explicit named RoutingA and custom-inbound group targets continue to take precedence.
+
+#### 6.3 Outbound Group Types
 
 1. **Balancer (Load Balancing)**
-    - Opt-in per proxy group; at least two selected members are needed to distribute traffic.
-    - Round-robin distribution is performed by Xray for each new proxy connection.
-    - Changing the group policy regenerates and restarts the active core configuration through the existing outbound settings API.
+   - Opt-in per proxy group; at least two selected members are needed to distribute traffic.
+   - Round-robin distribution is performed by Xray for each new proxy connection.
+   - Changing the group policy regenerates and restarts the active core configuration through the existing outbound settings API.
 
 2. **Selector (Manual Selection)**
    - Users manually select which server to use
    - GUI provides server switching interface
    - Also uses group outbound structure
 
-#### 6.3 Observatory Integration
+#### 6.4 Observatory Integration
 
 The round-robin strategy does not require observatory data and does not provide health-based failover. Observatory settings remain available for latency-related strategies that may be added later.
 

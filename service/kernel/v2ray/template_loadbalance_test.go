@@ -124,3 +124,32 @@ func TestResolveOutboundsKeepsDisabledGroupSingleServer(t *testing.T) {
 		t.Fatalf("expected disabled group to use ordinary outbound tag PROXY, got %q", template.Outbounds[0].Tag)
 	}
 }
+
+func TestActiveProxyOutboundNameUsesSelectedGroupOrConfiguredFallback(t *testing.T) {
+	template := newLoadBalanceTemplate()
+	data := newLoadBalanceServerData(true)
+
+	if _, _, err := template.resolveOutbounds(data); err != nil {
+		t.Fatalf("resolveOutbounds returned an error: %v", err)
+	}
+	if got, want := template.activeProxyOutboundName("PROXY"), "『PROXY』"; got != want {
+		t.Fatalf("active balancer group = %q, want %q", got, want)
+	}
+	if got, want := template.activeProxyOutboundName("missing"), "『PROXY』"; got != want {
+		t.Fatalf("missing active group fallback = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultProxyOutboundNameKeepsNamedGroupTargets(t *testing.T) {
+	template := newLoadBalanceTemplate()
+	data := newLoadBalanceServerData(true)
+	if _, _, err := template.resolveOutbounds(data); err != nil {
+		t.Fatalf("resolveOutbounds returned an error: %v", err)
+	}
+	if got, want := template.defaultProxyOutboundName(configure.DefaultOutboundName, "PROXY"), "『PROXY』"; got != want {
+		t.Fatalf("reserved proxy route target = %q, want %q", got, want)
+	}
+	if got, want := template.defaultProxyOutboundName("direct", "PROXY"), "direct"; got != want {
+		t.Fatalf("named route target = %q, want %q", got, want)
+	}
+}

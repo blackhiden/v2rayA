@@ -107,6 +107,7 @@ The event source provides route selection, not exact per-session byte counters o
 4. **`system_config`** - Key-value settings store
    - Application settings
    - Feature flags
+   - The validated `active_outbound` proxy-group name; missing or stale values self-heal to the permanent `proxy` group
 
 5. **`outbound_names`** / **`outbound_connections`** / **`outbound_settings`** - Custom outbound routing
 
@@ -204,6 +205,14 @@ The event source provides route selection, not exact per-session byte counters o
 ### Outbound Group Configuration
 
 v2rayA supports grouping selected servers into outbound groups. Each group persists an `OutboundSetting` record, including its latency-probe options and an independent load-balancing policy (`loadBalanceEnabled`, `loadBalanceStrategy`).
+
+#### Active Group Selection
+
+`system_config:active_outbound` records the one group used for default proxy routing. `GET /api/outbounds` returns both the configured names and `activeOutboundName`; the authenticated `PUT /api/outbound/active` endpoint validates the requested name, persists it, and rebuilds a running core configuration. If rebuilding fails, it restores the prior selection.
+
+The Vue 2 **PROXY GROUP** tab renders the available groups in a table with a single radio group, connected-member counts, and an active status badge. The selection is deliberately separate from the navbar group-management selection, which only controls the group being viewed or edited.
+
+During template generation, default/transparent routes and the reserved RoutingA `proxy` target resolve to the active group. An enabled active group resolves to its Xray balancer tag; a conventional group resolves to its ordinary outbound tag. A selected group with no connected members retains its persisted selection but the generated configuration falls back to the first available connected group. Explicit named RoutingA and custom-inbound targets are not rewritten.
 
 #### Balancer Groups (Load Balancing)
 
