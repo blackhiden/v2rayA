@@ -44,8 +44,11 @@ type Subscription struct {
 	AutoSelect bool                `json:"autoSelect"`
 }
 
+// NewUpdateStatus stamps a subscription update. RFC 3339 carries the zone, so
+// a browser in another zone than the service (a container in UTC, a router)
+// shows the moment, not one shifted by the difference.
 func NewUpdateStatus() SubscriptionStatus {
-	return SubscriptionStatus(time.Now().Local().Format("2006-1-2 15:04:05"))
+	return SubscriptionStatus(time.Now().Format(time.RFC3339))
 }
 
 // Mapping []TouchServerRaw to []Server
@@ -86,7 +89,8 @@ func serverRawsToServers(rss []configure.ServerRaw) (ts []Server) {
 
 // GenerateTouch generates a touch from database
 func GenerateTouch() (t Touch) {
-	t.Servers = serverRawsToServers(configure.GetServers())
+	servers := configure.GetServers()
+	t.Servers = serverRawsToServers(servers)
 	subscriptions := configure.GetSubscriptions()
 	t.Subscriptions = make([]Subscription, len(subscriptions))
 	for i, v := range subscriptions {
@@ -117,7 +121,8 @@ func GenerateTouch() (t Touch) {
 			AutoSelect: v.AutoSelect,
 		}
 	}
-	t.ConnectedServers = configure.GetConnectedServers().Get()
+	t.ConnectedServers = configure.GetConnectedServers().ToWhiches()
+	markSelected(t.ConnectedServers, configure.LocatorOf(servers, subscriptions))
 	//补充TYPE
 	for i := range t.Subscriptions {
 		t.Subscriptions[i].TYPE = configure.SubscriptionType
@@ -129,4 +134,24 @@ func GenerateTouch() (t Touch) {
 		t.Servers[i].TYPE = configure.ServerType
 	}
 	return
+}
+
+// markSelected flags the member each group routes through alone, when its
+// setting names one that is still a member.
+func markSelected(connected []*configure.Which, loc *configure.Locator) {
+	selected := make(map[string]string)
+	for _, w := range connected {
+		if _, ok := selected[w.Outbound]; !ok {
+			selected[w.Outbound] = configure.GetOutboundSetting(w.Outbound).Selected
+		}
+		link := selected[w.Outbound]
+		if link == "" {
+			continue
+		}
+		sr, err := loc.Locate(&w.NodeRef)
+		if err != nil || sr.ServerObj == nil {
+			continue
+		}
+		w.Selected = sr.ServerObj.ExportToURL() == link
+	}
 }

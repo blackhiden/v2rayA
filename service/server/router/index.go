@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -52,7 +53,11 @@ func cachedHTML(html []byte) func(ctx *gin.Context) {
 			return
 		}
 		ctx.Header("Content-Type", "text/html; charset=utf-8")
-		ctx.Header("Cache-Control", "public, must-revalidate")
+		// no-cache: the entry page names hashed assets that vanish on every
+		// upgrade; a copy served from cache without revalidation loads a
+		// bundle that no longer exists and shows a blank page. The ETag
+		// still makes the revalidation a 304.
+		ctx.Header("Cache-Control", "no-cache")
 		ctx.Header("ETag", etag)
 		if match := ctx.GetHeader("If-None-Match"); match != "" {
 			if strings.Contains(match, etag) {
@@ -290,27 +295,25 @@ func Run() error {
 		auth.GET("customInbound", controller.GetCustomInbound)
 		auth.POST("customInbound", controller.PostCustomInbound)
 		auth.DELETE("customInbound", controller.DeleteCustomInbound)
-		//auth.PUT("account", controller.PutAccount)
 		auth.GET("dnsRules", controller.GetDnsRules)
 		auth.PUT("dnsRules", controller.PutDnsRules)
 		auth.GET("routingA", controller.GetRoutingA)
+		auth.POST("routingA/import", controller.PostRoutingAImport)
+		auth.GET("params", controller.GetParams)
 		auth.PUT("routingA", controller.PutRoutingA)
 		auth.GET("outbounds", controller.GetOutbounds)
 		auth.GET("outbound", controller.GetOutbound)
 		auth.POST("outbound", controller.PostOutbound)
 		auth.PUT("outbound", controller.PutOutbound)
-		auth.PUT("outbound/active", controller.SetActiveOutbound)
 		auth.PUT("outboundConnections", controller.PutOutboundConnections)
-		auth.POST("bulkRemoveByLatency", controller.PostBulkRemoveByLatency)
+		auth.PUT("outboundSelection", controller.PutOutboundSelection)
 		auth.DELETE("outbound", controller.DeleteOutbound)
 		auth.GET("message", controller.WsMessage)
-		auth.GET("live-flow", controller.WsLiveFlow)
 		auth.GET("logger", controller.GetLogger)
 		auth.GET("domainsExcluded", controller.GetDomainsExcluded)
 		auth.GET("tproxyWhiteIpGroups", controller.GetTproxyWhiteIpGroups)
 		auth.PUT("domainsExcluded", controller.PutDomainsExcluded)
 		auth.PUT("tproxyWhiteIpGroups", controller.PutTproxyWhiteIpGroups)
-		auth.GET("networkInterfaces", controller.GetNetworkInterfaces)
 	}
 
 	ServeGUI(root)
@@ -334,7 +337,7 @@ func Run() error {
 		}
 	}
 
-	srv := &http.Server{Handler: engine}
+	srv := newHTTPServer(engine)
 	httpServerMu.Lock()
 	httpServer = srv
 	httpServerMu.Unlock()
@@ -349,6 +352,14 @@ func Run() error {
 		return nil
 	}
 	return err
+}
+
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 }
 
 // Shutdown gracefully stops the HTTP server started by Run.

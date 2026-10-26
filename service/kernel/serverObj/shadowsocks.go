@@ -46,8 +46,17 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 		if err != nil {
 			return nil, false
 		}
-		username := u.User.String()
-		username, _ = common.Base64URLDecode(username)
+		if u.User == nil {
+			return nil, false
+		}
+		username := u.User.Username()
+		if password, ok := u.User.Password(); ok {
+			username += ":" + password
+		} else if decoded, err := common.Base64URLDecode(username); err == nil {
+			username = decoded
+		} else if decodedStd, err := common.Base64StdDecode(username); err == nil {
+			username = decodedStd
+		}
 		arr := strings.SplitN(username, ":", 2)
 		if len(arr) != 2 {
 			return nil, false
@@ -81,6 +90,9 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 	content := u
 	// try to parse the ss:// link, if it fails, base64 decode first
 	if v, ok = parse(content); !ok {
+		if len(content) <= len("ss://") {
+			return nil, fmt.Errorf("%w: ss link too short", ErrInvalidParameter)
+		}
 		// 进行base64解码，并unmarshal到VmessInfo上
 		t := content[5:]
 		var l, r string
@@ -94,7 +106,7 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 		if err != nil {
 			l, err = common.Base64URLDecode(l)
 			if err != nil {
-				return
+				return nil, fmt.Errorf("%w: ss link userinfo is not base64(method:password); expected ss://BASE64(method:password)@host:port or ss://method:password@host:port", ErrInvalidParameter)
 			}
 		}
 		t = "ss://" + l
@@ -104,9 +116,27 @@ func ParseSSURL(u string) (data *Shadowsocks, err error) {
 		v, ok = parse(t)
 	}
 	if !ok {
-		return nil, fmt.Errorf("%w: unrecognized ss address", ErrInvalidParameter)
+		return nil, fmt.Errorf("%w: ss link payload is not method:password@host:port; expected ss://BASE64(method:password)@host:port or ss://method:password@host:port", ErrInvalidParameter)
+	}
+	if !ssCipherSupported(v.Cipher) {
+		return nil, common.Coded("LINK_UNSUPPORTED_CIPHER", fmt.Errorf("cipher %q is not supported by the core; use aes-128-gcm, aes-256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 or a 2022-blake3 method", v.Cipher), map[string]interface{}{"cipher": v.Cipher})
 	}
 	return v, nil
+}
+
+// ssCipherSupported lists what xray-core's shadowsocks outbound accepts
+// (infra/conf/shadowsocks.go): the AEAD ciphers and SS2022. The stream ciphers
+// (rc4-md5, aes-*-cfb, chacha20-ietf) and none/plain fail at core start.
+func ssCipherSupported(cipher string) bool {
+	switch cipher {
+	case "aes-128-gcm", "aes-256-gcm",
+		"chacha20-poly1305", "chacha20-ietf-poly1305",
+		"xchacha20-poly1305", "xchacha20-ietf-poly1305",
+		"aead_aes_128_gcm", "aead_aes_256_gcm", "aead_chacha20_poly1305", "aead_xchacha20_poly1305",
+		"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		return true
+	}
+	return false
 }
 
 func (s *Shadowsocks) ConfigurationMC(info PriorInfo) (c Configuration, err error) {
@@ -339,7 +369,7 @@ func (s *Shadowsocks) Configuration(info PriorInfo) (c Configuration, err error)
 func (s *Shadowsocks) exportToChainURL() string {
 	u := &url.URL{
 		Scheme:   "ss",
-		User:     url.User(strings.TrimSuffix(base64.URLEncoding.EncodeToString([]byte(s.Cipher+":"+s.Password)), "=")),
+		User:     url.User(base64.RawURLEncoding.EncodeToString([]byte(s.Cipher + ":" + s.Password))),
 		Host:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		Fragment: s.Name,
 	}
@@ -354,7 +384,7 @@ func (s *Shadowsocks) exportToChainURL() string {
 func (s *Shadowsocks) ExportToURL() string {
 	u := &url.URL{
 		Scheme:   "ss",
-		User:     url.User(strings.TrimSuffix(base64.URLEncoding.EncodeToString([]byte(s.Cipher+":"+s.Password)), "=")),
+		User:     url.User(base64.RawURLEncoding.EncodeToString([]byte(s.Cipher + ":" + s.Password))),
 		Host:     net.JoinHostPort(s.Server, strconv.Itoa(s.Port)),
 		Fragment: s.Name,
 	}
@@ -460,7 +490,7 @@ func ParseSip003Opts(opts string) Sip003Opts {
 			sip003Opts.Obfs = a[1]
 		case "obfs-path", "obfs-uri", "path":
 			if !strings.HasPrefix(a[1], "/") {
-				a[1] += "/"
+				a[1] = "/" + a[1]
 			}
 			sip003Opts.Path = a[1]
 		case "obfs-host", "host":
@@ -480,7 +510,9 @@ func ParseSip003(plugin string) Sip003 {
 	default:
 		sip003.Name = fields[0]
 	}
-	sip003.Opts = ParseSip003Opts(fields[1])
+	if len(fields) == 2 {
+		sip003.Opts = ParseSip003Opts(fields[1])
+	}
 	return sip003
 }
 

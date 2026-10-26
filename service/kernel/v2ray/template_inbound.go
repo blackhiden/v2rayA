@@ -219,6 +219,15 @@ func (t *Template) setInbound(setting *configure.Setting) error {
 		if ci.Protocol == "socks" {
 			ib.Settings = &coreObj.InboundSettings{UDP: true}
 		}
+		if ci.Username != "" || ci.Password != "" {
+			if ib.Settings == nil {
+				ib.Settings = &coreObj.InboundSettings{}
+			}
+			// socks calls it "password", http "noauth"/accounts; both read the
+			// same account list.
+			ib.Settings.Auth = "password"
+			ib.Settings.Accounts = []coreObj.Account{{User: ci.Username, Pass: ci.Password}}
+		}
 		t.Inbounds = append(t.Inbounds, ib)
 
 		// Generate per-inbound routing rules based on the bound outbound group
@@ -264,18 +273,12 @@ func (t *Template) setInbound(setting *configure.Setting) error {
 				Tag: "transparent-socks",
 			})
 		case configure.TransparentTun:
+			// The built-in TUN: the core opens the device; there is no port.
 			t.Inbounds = append(t.Inbounds, coreObj.Inbound{
-				Port:     tinytunSocksPort,
-				Protocol: "socks",
-				Listen:   "127.0.0.1",
-				Settings: &coreObj.InboundSettings{
-					UDP: true,
-				},
-				Tag: "transparent",
+				Protocol: "tun-mips",
+				Settings: tunInboundSettings(t.Setting),
+				Tag:      "transparent",
 			})
-			// TinyTun v0.0.2+ handles DNS routing natively via its own DNS groups.
-			// The former dns-in-tun dokodemo-door (127.0.0.1:6053) is no longer needed;
-			// v2ray acts as a pure SOCKS5 forwarder for non-DNS traffic.
 		}
 
 	}

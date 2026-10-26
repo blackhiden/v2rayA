@@ -6,12 +6,15 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
+	"runtime"
 	"strings"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/v2rayA/v2rayA/common"
+	"github.com/v2rayA/v2rayA/common/resolv"
 	"github.com/v2rayA/v2rayA/db/configure"
+	"github.com/v2rayA/v2rayA/kernel/iptables"
+	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
 type Addr struct {
@@ -20,58 +23,153 @@ type Addr struct {
 	udp  bool
 }
 
-func parseDnsAddr(addr string) Addr {
-	// 223.5.5.5
-	if net.ParseIP(addr) != nil {
-		return Addr{
-			host: addr,
-			port: "53",
-			udp:  true,
-		}
-	}
-	// dns.google:53
-	if host, port, err := net.SplitHostPort(addr); err == nil {
-		if _, err = strconv.Atoi(port); err == nil {
-			return Addr{
-				host: host,
-				port: port,
-				udp:  true,
-			}
-		}
-	}
-	// tcp://8.8.8.8:53, https://dns.google/dns-query, quic://dns.nextdns.io
-	if strings.Contains(addr, "://") {
-		if u, err := url.Parse(addr); err == nil {
-			udp := false
-			if u.Scheme == "quic" {
-				udp = true
-			}
-			return Addr{
-				host: u.Hostname(),
-				port: u.Port(),
-				udp:  udp,
-			}
-		}
-	}
-	// dns.google, dns.pub, etc.
-	return Addr{
-		host: addr,
-		port: "53",
-		udp:  true,
-	}
-}
-
-type DnsRouting struct {
-	DirectDomains []Addr
-	ProxyDomains  []Addr
-	DirectIPs     []Addr
-	ProxyIPs      []Addr
-}
-
 // setDNS 生成新 DNS 模块的配置，嵌入 xray JSON 供 v2raya-core 读取。
 // v2raya-core 启动时解析此配置并启动独立 DNS 监听器，v2rayA 不参与 DNS 查询处理。
 func (t *Template) setDNS(serverInfos []serverInfo) error {
+	if !dnsServiceEnabled(t.Setting) {
+		t.DnsModuleConfig = nil
+		return nil
+	}
 	return t.generateDnsModuleConfig(serverInfos)
+}
+
+// dnsModuleListenAddr is the DNS module's primary listener. The stored
+// setting defaults to 0.0.0.0:52353 (NewSetting and MigrateSetting write
+// it), so that value is treated as "not chosen": it stays on loopback
+// unless the box serves other hosts — port sharing, or IP forwarding for
+// a LAN behind it, whose clients' queries the PREROUTING REDIRECT delivers
+// to this host's LAN address. Any other value is the user's and is used
+// as is.
+func dnsModuleListenAddr(setting *configure.Setting) string {
+	const stock = "0.0.0.0:52353"
+	if setting.DnsListenAddr != "" && setting.DnsListenAddr != stock {
+		return setting.DnsListenAddr
+	}
+	if setting.PortSharing || setting.IpForward {
+		return stock
+	}
+	return "127.0.0.1:52353"
+}
+
+// dnsModuleExtraListenAddrs adds the 127.2.0.17:53 listener the resolv.conf
+// hijack points at, but only when port 53 is free for it: a resolver bound
+// to the wildcard address would make the bind fail and the core exit.
+func dnsModuleExtraListenAddrs(setting *configure.Setting) []string {
+	addrs := []string{}
+	// Every extra address here exists to catch a query that a REDIRECT rule
+	// or a hijacked resolver sends to it. Service mode leaves the firewall
+	// and the resolvers alone, so the module keeps only its configured
+	// address there.
+	if !dnsInterceptionEnabled(setting) {
+		return addrs
+	}
+	// The ip6tables REDIRECT sends an application's IPv6 DNS query to ::1,
+	// which a loopback IPv4 primary listener does not cover. A wildcard
+	// primary listener is dual-stack already and a second bind would fail.
+	host, _, _ := net.SplitHostPort(dnsModuleListenAddr(setting))
+	if ip := net.ParseIP(host); ip != nil && !ip.IsUnspecified() && ip.To4() != nil && iptables.IsIPv6Supported() {
+		addrs = append(addrs, net.JoinHostPort("::1", dnsModulePort(setting)))
+	}
+	// macOS's system resolver is pointed at loopback port 53 in tun mode
+	// (see tun_core_darwin.go); the Linux resolv.conf hijack points at
+	// 127.2.0.17. Nothing sends to either on Windows.
+	switch runtime.GOOS {
+	case "darwin":
+		if setting.TransparentType == configure.TransparentTun && IsTransparentOn(setting) {
+			// The system resolver is pointed at loopback in tun mode. If
+			// another resolver already owns the port, leave it to that one
+			// rather than start a core that cannot bind.
+			if err := probeListen("127.0.0.1:53"); err != nil {
+				log.Warn("DNS module will not listen on 127.0.0.1:53, the system resolver keeps using whatever answers there: %v", err)
+				return addrs
+			}
+			return append(addrs, "127.0.0.1:53")
+		}
+		return addrs
+	case "linux":
+	default:
+		return addrs
+	}
+	// The tproxy rules hand LAN clients' queries to 127.2.0.17 on the
+	// module's port and the OUTPUT REDIRECT lands local queries on
+	// 127.0.0.1; a primary listener on a specific address covers neither.
+	if ip := net.ParseIP(host); ip != nil && !ip.IsUnspecified() {
+		if !ip.IsLoopback() {
+			addrs = append(addrs, net.JoinHostPort("127.0.0.1", dnsModulePort(setting)))
+		}
+		addrs = append(addrs, net.JoinHostPort("127.2.0.17", dnsModulePort(setting)))
+	}
+	if could, err := CouldLocalDnsListen(); !could {
+		log.Warn("DNS module will not listen on 127.2.0.17:53: %v", err)
+		return addrs
+	}
+	return append(addrs, "127.2.0.17:53")
+}
+
+// CheckDnsUpstream rejects an upstream the DNS module cannot query. The
+// module speaks plain UDP and TCP, DNS over TLS and DNS over HTTPS;
+// quic:// (DoQ) used to be accepted here and then failed on every query.
+func CheckDnsUpstream(upstream string) error {
+	scheme, rest, found := strings.Cut(upstream, "://")
+	if !found {
+		if strings.TrimSpace(upstream) == "" {
+			return fmt.Errorf("DNS upstream is empty")
+		}
+		return nil
+	}
+	switch strings.ToLower(scheme) {
+	case "udp", "tcp", "tls":
+		if rest == "" {
+			return fmt.Errorf("DNS upstream %q has no address after the scheme", upstream)
+		}
+		return nil
+	case "https":
+		if u, err := url.Parse(upstream); err != nil || u.Hostname() == "" {
+			return fmt.Errorf("DNS upstream %q is not a URL with a host", upstream)
+		}
+		return nil
+	case "quic":
+		return fmt.Errorf("DNS upstream %q: DNS over QUIC is not supported; use an address (8.8.8.8), tls://host or https://host/dns-query", upstream)
+	default:
+		return fmt.Errorf("DNS upstream %q: unknown scheme %q; use an address, tcp://, tls:// or https://", upstream, scheme)
+	}
+}
+
+// directDnsServers lists the plain udp/tcp IP upstreams of the DNS rules
+// that go out directly, host:port. They come before any built-in public
+// resolver wherever the service or the core needs one of its own.
+func directDnsServers() []string {
+	var out []string
+	for _, rule := range configure.MigrateDnsRules(configure.GetDnsRulesNotNil()) {
+		if rule.Outbound != "" && rule.Outbound != "direct" {
+			continue
+		}
+		addr := rule.Upstream
+		if addr == "" {
+			addr = rule.Server
+		}
+		if strings.Contains(addr, "://") {
+			scheme, rest, _ := strings.Cut(addr, "://")
+			if scheme != "udp" && scheme != "tcp" {
+				continue
+			}
+			addr = rest
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			host, port = addr, "53"
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		out = append(out, net.JoinHostPort(host, port))
+	}
+	return common.Deduplicate(out)
+}
+
+func init() {
+	resolv.PreferredServers = directDnsServers
 }
 
 // generateDnsModuleConfig 生成新 DNS 模块的 JSON 配置，嵌入 xray JSON 配置文件。
@@ -84,10 +182,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		setting = configure.GetSettingNotNil()
 	}
 
-	listenAddr := setting.DnsListenAddr
-	if listenAddr == "" {
-		listenAddr = "0.0.0.0:52353"
-	}
+	listenAddr := dnsModuleListenAddr(setting)
 
 	// 获取 SOCKS 入站端口（用于 proxy_map）
 	socksPort := 20170
@@ -97,12 +192,13 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 
 	// 读取当前系统 DNS（保存原始配置，用于 v2raya-core 的 bootstrap 解析）。
 	// 此时 /etc/resolv.conf 尚未被劫持，读取的是真实的系统 DNS。
-	bootstrapDns := getSystemDnsServers()
+	// 规则里直连的明文上游排在其后，公共 DNS 只在这些都不可用时才轮到。
+	bootstrapDns := common.Deduplicate(append(getSystemDnsServers(), directDnsServers()...))
 
 	cfg := map[string]interface{}{
 		"listener": map[string]interface{}{
 			"listen_addr":        listenAddr,
-			"extra_listen_addrs": []string{"127.2.0.17:53"},
+			"extra_listen_addrs": dnsModuleExtraListenAddrs(setting),
 			"timeout":            5,
 		},
 		"cache": map[string]interface{}{
@@ -116,8 +212,11 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		"proxy_map":     make(map[string]interface{}),
 		"bootstrap":     make([]string, 0),
 		"bootstrap_dns": bootstrapDns,
-		"upstreams":     make([]map[string]interface{}, 0),
-		"rules":         make([]map[string]interface{}, 0),
+		// The module's own upstream sockets bind here on Windows and macOS,
+		// where there is no socket mark to keep them out of the TUN.
+		"egress_interface": TunEgressInterfaceIfTun(setting),
+		"upstreams":        make([]map[string]interface{}, 0),
+		"rules":            make([]map[string]interface{}, 0),
 	}
 
 	// 应用默认值
@@ -149,6 +248,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	seenUpstream := make(map[upstreamKey]int) // key → index in upstreams list
 	upstreams := cfg["upstreams"].([]map[string]interface{})
 	rulesList := cfg["rules"].([]map[string]interface{})
+	defaultUpstream := ""
 
 	for _, rule := range migrated {
 		upstreamAddr := rule.Upstream
@@ -208,14 +308,16 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 		}
 
 		// 如果是域名地址，加入 bootstrap 列表，由 v2raya-core 用系统 DNS 解析
-		if !strings.Contains(upstreamAddr, "://") {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				host = addr
+		bootHost := addr
+		if proto == "https" {
+			if u, err := url.Parse(upstreamAddr); err == nil {
+				bootHost = u.Hostname()
 			}
-			if net.ParseIP(host) == nil {
-				bootstrapList = append(bootstrapList, host)
-			}
+		} else if host, _, err := net.SplitHostPort(addr); err == nil {
+			bootHost = host
+		}
+		if bootHost != "" && net.ParseIP(bootHost) == nil {
+			bootstrapList = append(bootstrapList, bootHost)
 		}
 
 		outboundTag := rule.Outbound
@@ -331,8 +433,12 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 			}
 
 			rulesList = append(rulesList, rc)
+		} else {
+			defaultUpstream = upstreamID
 		}
 	}
+	// Without a catch-all rule the module keeps its own fallback (the last
+	// upstream in the list), which is what every earlier release did.
 
 	// 节点服务器域名必须直连解析：若命中默认（代理）上游，查询经 dispatcher
 	// 路由到代理出站，而代理出站连接节点又需要解析节点域名，形成死锁，
@@ -347,7 +453,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 	nodeDomains = common.Deduplicate(nodeDomains)
 	if len(nodeDomains) > 0 {
 		nodeUpstreamAddr := "223.5.5.5:53"
-		for _, s := range bootstrapDns {
+		for _, s := range append(directDnsServers(), bootstrapDns...) {
 			if host, _, err := net.SplitHostPort(s); err == nil {
 				if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
 					nodeUpstreamAddr = s
@@ -377,6 +483,7 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 
 	cfg["upstreams"] = upstreams
 	cfg["rules"] = rulesList
+	cfg["default_upstream"] = defaultUpstream
 
 	// bootstrap 列表去重
 	bootstrapList = common.Deduplicate(bootstrapList)
@@ -395,9 +502,18 @@ func (t *Template) generateDnsModuleConfig(serverInfos []serverInfo) error {
 // getSystemDnsServers 读取当前系统的 DNS 服务器列表（从 /etc/resolv.conf）。
 // 在劫持发生前调用，保存原始 DNS 供 v2raya-core bootstrap 使用。
 func getSystemDnsServers() []string {
-	data, err := os.ReadFile("/etc/resolv.conf")
+	data, err := os.ReadFile(resolvPath)
 	if err != nil {
 		return nil
+	}
+	// while the file is ours, the system's own resolvers are in the backup;
+	// the hijacked content would hand the module its own address
+	if strings.HasPrefix(string(data), HijackFlag) {
+		if backup, err := os.ReadFile(resolvBackupPath); err == nil {
+			data = backup
+		} else {
+			return nil
+		}
 	}
 	var servers []string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -413,4 +529,20 @@ func getSystemDnsServers() []string {
 		}
 	}
 	return servers
+}
+
+// probeListen reports whether both the UDP and the TCP side of addr can be
+// bound right now.
+func probeListen(addr string) error {
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
+	pc.Close()
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	l.Close()
+	return nil
 }

@@ -36,6 +36,9 @@ func (t *Template) SetOutboundSockopt() {
 			tmp := t.Setting.TcpFastOpen == configure.Yes
 			t.Outbounds[i].StreamSettings.Sockopt.TCPFastOpen = &tmp
 		}
+		if t.Setting.MuxOn == configure.Yes && t.Outbounds[i].Protocol == "vmess" && t.Outbounds[i].Mux == nil {
+			t.Outbounds[i].Mux = &coreObj.Mux{Enabled: true, Concurrency: t.Setting.Mux}
+		}
 		t.checkAndSetMark(&t.Outbounds[i], mark)
 	}
 }
@@ -63,6 +66,11 @@ func (t *Template) setDualStack() {
 		}
 		if tag == "dns-in" {
 			// Handled separately — skip generic duplication.
+			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
+			continue
+		}
+		if t.Inbounds[i].Protocol == "tun-mips" {
+			// One device, no listen address; a twin would open it twice.
 			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
 			continue
 		}
@@ -217,10 +225,10 @@ func (t *Template) resolveOutbounds(
 
 	supportUDP = make(map[string]bool)
 	t.serverInfoMap = make(map[string]*serverInfo)
-	t.balancerGroups = nil
 	type _outbound struct {
 		weight   int
 		outbound coreObj.OutboundObject
+		balancer bool
 	}
 	serverInfo2Index := make(map[*serverInfo]int)
 	for i := range serverData.ServerInfos {
@@ -230,78 +238,99 @@ func (t *Template) resolveOutbounds(
 	outboundTags = make([]string, len(serverData.ServerInfos))
 	var extraOutbounds []coreObj.OutboundObject
 	var outbounds []_outbound
-	setting := t.Setting
-	if setting == nil {
-		setting = configure.GetSettingNotNil()
-	}
-	// Load balancing is a proxy-group concern. Build every group from the
-	// outbound name instead of grouping by server object; the latter split a
-	// group containing different servers into unrelated one-member balancers.
-	for outboundName, sInfos := range serverData.OutboundName2ServerInfos {
-		if len(sInfos) == 0 {
-			continue
-		}
-		outboundSetting := serverData.OutboundName2Setting[outboundName]
-		loadBalance := outboundSetting.LoadBalanceEnabled && len(sInfos) > 1
-		groupTag := GroupWrapper(outboundName)
+	setting := configure.GetSettingNotNil()
+	for obj, sInfos := range serverData.ServerObj2ServerInfos() {
+		var (
+			usedByBalancer bool
+		)
+		// an vmessInfo(server template) may be used by multiple serverInfos(a connected server)
 
-		if !loadBalance {
-			// Preserve ordinary group behavior: only its first selected member is
-			// active unless this group has explicitly enabled load balancing.
-			sInfo := sInfos[0]
-			index := serverInfo2Index[sInfo]
-			c, err := sInfo.Info.Configuration(serverObj.PriorInfo{
-				Variant:     t.Variant,
-				CoreVersion: t.CoreVersion,
-				Tag:         outboundName,
-				PluginPort:  sInfo.PluginPort,
-				Backend:     resolveEffectiveBackend(sInfo.Info, setting),
-			})
-			if err != nil {
-				return nil, nil, err
-			}
-			t.serverInfoMap[outboundName] = sInfo
-			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound})
-			outboundTags[index] = outboundName
-			supportUDP[outboundName] = c.UDPSupport
-			continue
+		// outbound name is not just v2ray outbound tag, it may be a balancer
+		type balancer struct {
+			name       string
+			serverInfo *serverInfo
 		}
-
-		var selector []string
+		var balancers []balancer
 		for _, sInfo := range sInfos {
-			index := serverInfo2Index[sInfo]
-			memberTag := fmt.Sprintf("%s_%d", groupTag, index)
-			c, err := sInfo.Info.Configuration(serverObj.PriorInfo{
+			if len(serverData.OutboundName2ServerObjs[sInfo.OutboundName]) > 1 {
+				// balancer
+				if !usedByBalancer {
+					usedByBalancer = true
+				}
+				balancers = append(balancers, balancer{
+					name:       sInfo.OutboundName,
+					serverInfo: sInfo,
+				})
+			} else {
+				// pure outbound
+				outboundTag := sInfo.OutboundName
+				c, err := obj.Configuration(serverObj.PriorInfo{
+					Variant:     t.Variant,
+					CoreVersion: t.CoreVersion,
+					Tag:         outboundTag,
+					PluginPort:  sInfo.PluginPort,
+					Backend:     resolveEffectiveBackend(obj, setting),
+				})
+				if err != nil {
+					return nil, nil, err
+				}
+				// Store server info for this outbound
+				t.serverInfoMap[outboundTag] = sInfo
+				extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
+				outbounds = append(outbounds, _outbound{
+					weight:   serverInfo2Index[sInfo],
+					outbound: c.CoreOutbound,
+					balancer: false,
+				})
+				outboundTags[serverInfo2Index[sInfo]] = outboundTag
+				supportUDP[sInfo.OutboundName] = c.UDPSupport
+			}
+		}
+		if usedByBalancer {
+			// the v2ray outbound is shared by balancers
+			outboundTag := GroupWrapper(obj.GetName())
+			c, err := obj.Configuration(serverObj.PriorInfo{
 				Variant:     t.Variant,
 				CoreVersion: t.CoreVersion,
-				Tag:         memberTag,
-				PluginPort:  sInfo.PluginPort,
-				Backend:     resolveEffectiveBackend(sInfo.Info, setting),
+				Tag:         outboundTag,
+				PluginPort:  0,
+				Backend:     resolveEffectiveBackend(obj, setting),
 			})
 			if err != nil {
 				return nil, nil, err
 			}
-			t.serverInfoMap[memberTag] = sInfo
+			t.serverInfoMap[outboundTag] = balancers[0].serverInfo
 			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound})
-			outboundTags[index] = memberTag
-			selector = append(selector, memberTag)
-			if existing, ok := supportUDP[groupTag]; !ok {
-				supportUDP[groupTag] = c.UDPSupport
-			} else if existing && !c.UDPSupport {
-				supportUDP[groupTag] = false
+			for _, v := range balancers {
+				c.CoreOutbound.Balancers = append(c.CoreOutbound.Balancers, v.name)
+			}
+			// we use the lowest serverInfo index as the order weight of the balancer outbound
+			weight := -1
+			for _, v := range balancers {
+				index := serverInfo2Index[v.serverInfo]
+				if weight == -1 || weight > index {
+					weight = index
+				}
+				// tag
+				outboundTags[index] = outboundTag
+			}
+			outbounds = append(outbounds, _outbound{
+				weight:   weight,
+				outbound: c.CoreOutbound,
+				balancer: true,
+			})
+
+			// if any node does not support UDP, the outbound should be tagged as UDP unsupported
+			for _, outboundName := range c.CoreOutbound.Balancers {
+				_supportUDP := c.UDPSupport
+				if _, ok := supportUDP[outboundName]; !ok {
+					supportUDP[outboundName] = _supportUDP
+				}
+				if supportUDP[outboundName] && !_supportUDP {
+					supportUDP[outboundName] = false
+				}
 			}
 		}
-
-		// A balancer is a routing object, not an outbound handler. Keep its
-		// metadata separate so no invalid empty-protocol outbound is serialized.
-		t.serverInfoMap[groupTag] = sInfos[0]
-		t.balancerGroups = append(t.balancerGroups, balancerGroup{
-			Tag:          groupTag,
-			OutboundName: outboundName,
-			Selector:     selector,
-		})
 	}
 	sort.Slice(outbounds, func(i, j int) bool {
 		return outbounds[i].weight < outbounds[j].weight
@@ -331,6 +360,11 @@ func (t *Template) checkAndSetMark(o *coreObj.OutboundObject, mark int) {
 		o.StreamSettings.Sockopt = new(coreObj.Sockopt)
 	}
 	o.StreamSettings.Sockopt.Mark = &mark
+	// Where the mark means nothing to the kernel, the TUN needs the
+	// core's sockets pinned to the physical interface instead.
+	if iface := TunEgressInterfaceIfTun(t.Setting); iface != "" {
+		o.StreamSettings.Sockopt.Interface = iface
+	}
 }
 
 func (t *Template) InsertMappingOutbound(o serverObj.ServerObj, inboundPort string, udpSupport bool, pluginPort int, protocol string) (err error) {

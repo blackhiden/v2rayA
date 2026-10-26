@@ -11,24 +11,16 @@ import (
 )
 
 func GetPingLatency(ctx *gin.Context) {
-	updatingMu.Lock()
-	if updating {
-		common.ResponseError(ctx, processingErr)
-		updatingMu.Unlock()
+	release, ok := beginMutation(ctx)
+	if !ok {
 		return
 	}
-	updating = true
-	updatingMu.Unlock()
-	defer func() {
-		updatingMu.Lock()
-		updating = false
-		updatingMu.Unlock()
-	}()
+	defer release()
 
 	var wt []*configure.Which
 	err := jsoniter.Unmarshal([]byte(ctx.Query("whiches")), &wt)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("whiches", "query parameter \"whiches\" must be a JSON array of server items"))
 		return
 	}
 	wt, err = service.Ping(wt, 1*time.Second)
@@ -42,24 +34,16 @@ func GetPingLatency(ctx *gin.Context) {
 }
 
 func GetHttpLatency(ctx *gin.Context) {
-	updatingMu.Lock()
-	if updating {
-		common.ResponseError(ctx, processingErr)
-		updatingMu.Unlock()
+	release, ok := beginMutation(ctx)
+	if !ok {
 		return
 	}
-	updating = true
-	updatingMu.Unlock()
-	defer func() {
-		updatingMu.Lock()
-		updating = false
-		updatingMu.Unlock()
-	}()
+	defer release()
 
 	var wt []*configure.Which
 	err := jsoniter.Unmarshal([]byte(ctx.Query("whiches")), &wt)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("whiches", "query parameter \"whiches\" must be a JSON array of server items"))
 		return
 	}
 	wt, err = service.TestHttpLatency(wt, 8*time.Second, 32, false, ctx.Query("testUrl"))

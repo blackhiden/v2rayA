@@ -15,13 +15,18 @@ func GetTproxyWhiteIpGroups(ctx *gin.Context) {
 }
 
 func PutTproxyWhiteIpGroups(ctx *gin.Context) {
+	release, ok := beginMutation(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	var data struct {
 		CountryCodes []string `json:"countryCodes"`
 		CustomIps    []string `json:"customIps"`
 	}
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("countryCodes and customIps", "request body must be {\"countryCodes\": [string], \"customIps\": [string]}"))
 		return
 	}
 	configure.SetTproxyWhiteIpGroups(data.CountryCodes, data.CustomIps)

@@ -13,12 +13,17 @@ func GetDomainsExcluded(ctx *gin.Context) {
 }
 
 func PutDomainsExcluded(ctx *gin.Context) {
+	release, ok := beginMutation(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	var data struct {
 		DomainList string `json:"domains"`
 	}
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("domains", "request body must be {\"domains\": string}"))
 		return
 	}
 	configure.SetDomainsExcluded(data.DomainList)

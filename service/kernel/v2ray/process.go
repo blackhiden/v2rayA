@@ -25,7 +25,7 @@ import (
 	"github.com/v2rayA/v2rayA/pkg/util/log"
 )
 
-var NoConnectedServerErr = fmt.Errorf("no selected servers")
+var NoConnectedServerErr = common.Coded("NO_SERVER_SELECTED", fmt.Errorf("no selected servers"), nil)
 
 // Process is a v2ray-core process
 type Process struct {
@@ -54,6 +54,14 @@ func NewProcess(tmpl *Template,
 			process.rollback(rollbackStage)
 		}
 	}()
+	// The template's API producers were started with it; a start that
+	// fails before the process owns them must stop them, or each failed
+	// start leaves a goroutine polling a port nothing listens on.
+	defer func() {
+		if err != nil {
+			_ = tmpl.Close()
+		}
+	}()
 
 	// DNS 模块由 v2raya-core 进程内启动（基于 dns_module 配置段），
 	// v2rayA 仅负责生成配置和在透明代理时应用防火墙规则。
@@ -74,17 +82,12 @@ func NewProcess(tmpl *Template,
 		return nil, err
 	}
 	if err = tmpl.CheckInboundPortsOccupied(); err != nil {
-		return nil, fmt.Errorf("%v", err)
+		return nil, err
 	}
 	pCtx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		if err != nil {
 			cancel()
-		}
-	}()
-	defer func() {
-		if err != nil {
-			_ = tmpl.Close()
 		}
 	}()
 	if tmpl.API == nil {
@@ -96,14 +99,18 @@ func NewProcess(tmpl *Template,
 	}
 	proc, err := StartCoreProcess(pCtx)
 	if err != nil {
-		return nil, err
+		var coded *common.CodedError
+		if errors.As(err, &coded) {
+			return nil, err
+		}
+		return nil, common.Coded("CORE_START_FAILED", err, map[string]interface{}{"detail": err.Error()})
 	}
 	rollbackStage = 1 // xray 已启动
 	if err = poststart(); err != nil {
 		return nil, err
 	}
 	process.proc = proc
-	var unexpectedExiting bool
+	var unexpectedExiting atomic.Bool
 	go func() {
 		defer close(process.done)
 		p, e := proc.Wait()
@@ -123,7 +130,7 @@ func NewProcess(tmpl *Template,
 			t = append(t, e.Error())
 		}
 		log.Warn("v2ray-core: %v", strings.Join(t, ": "))
-		unexpectedExiting = true
+		unexpectedExiting.Store(true)
 	}()
 	// ports to check
 	portList := []string{strconv.Itoa(tmpl.ApiPort)}
@@ -137,16 +144,14 @@ func NewProcess(tmpl *Template,
 			i++
 			continue
 		}
-		if unexpectedExiting {
-			if log.Log.GetLevel() > log.ParseLevel("info") {
-				log.Error("some critical information may lost due to your log level")
-			}
-			return nil, fmt.Errorf("unexpected exiting: check the log for more information")
+		if unexpectedExiting.Load() {
+			return nil, common.Coded("CORE_START_FAILED", fmt.Errorf("v2raya_core exited right after starting; the reason is in the v2rayA log"), map[string]interface{}{"detail": "v2raya_core exited right after starting; the reason is in the v2rayA log"})
 		}
 		if time.Since(startTime) > startTimeOut {
 			log.Info("Attempting to terminate timed-out process with SIGTERM")
 			_ = proc.Signal(syscall.SIGTERM)
-			return nil, fmt.Errorf("timeout: check the log for more information")
+			err := fmt.Errorf("v2raya_core did not open its API port within %d s (--core-startup-timeout); the reason is in the v2rayA log", int(startTimeOut/time.Second))
+			return nil, common.Coded("CORE_START_FAILED", err, map[string]interface{}{"detail": err.Error()})
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -155,45 +160,38 @@ func NewProcess(tmpl *Template,
 }
 
 type logInfoWriter struct {
-	mu        sync.Mutex
-	remainder string
 }
 
-func (w *logInfoWriter) Write(p []byte) (n int, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	w.remainder += string(p)
-	lines := strings.Split(w.remainder, "\n")
-	w.remainder = lines[len(lines)-1]
-	// Avoid retaining an unbounded malformed core output line.
-	if len(w.remainder) > 64*1024 {
-		log.Warn("v2ray-core: discarded oversized output line")
-		w.remainder = ""
+func (w logInfoWriter) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
 	}
+	s := string(p)
+	// trim the ending \n
+	length := len(s)
+	if s[length-1] == '\n' {
+		s = s[:length-1]
+	}
+	// print each line separately
+	lines := strings.Split(s, "\n")
+	for _, line := range lines {
+		// remove timestamp
+		fields := strings.SplitN(line, " ", 3)
+		if len(fields) >= 3 {
+			if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
+				log.Info("%v", fields[2])
+			} else {
+				log.Info("%v", line)
+			}
+		} else {
+			log.Info("%v", line)
+		}
 
-	for _, line := range lines[:len(lines)-1] {
-		w.handleLine(line)
 	}
 	return len(p), nil
 }
 
-func (w *logInfoWriter) handleLine(line string) {
-	if line == "" || ConsumeCoreLiveFlowEvent(line) {
-		return
-	}
-	// Remove a conventional core timestamp before forwarding the line.
-	fields := strings.SplitN(line, " ", 3)
-	if len(fields) >= 3 {
-		if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
-			log.Info("%v", fields[2])
-			return
-		}
-	}
-	log.Info("%v", line)
-}
-
-var logWriter = &logInfoWriter{}
+var logWriter logInfoWriter
 
 func (p *Process) Close() error {
 	p.mutex.Lock()
@@ -208,9 +206,6 @@ func (p *Process) Close() error {
 		if err != nil {
 			return err
 		}
-	} else {
-		_, err := p.proc.Wait()
-		return err
 	}
 	return nil
 }
@@ -236,10 +231,8 @@ func RunWithLog(ctx context.Context, name string, argv []string, dir string, env
 	cmd.Args = argv
 	cmd.Dir = dir
 	cmd.Env = env
-	// os/exec may write stdout and stderr concurrently. They need independent
-	// line buffers so a private live-flow event cannot be spliced with stderr.
-	cmd.Stdout = &logInfoWriter{}
-	cmd.Stderr = &logInfoWriter{}
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
 	err := cmd.Start()
 	if err != nil {
 		return nil, err
@@ -264,10 +257,13 @@ func StartCoreProcess(ctx context.Context) (*os.Process, error) {
 
 	// Get asset directory
 	assetDir := asset.GetV2rayLocationAssetOverride()
+	// The core is told to look in assetDir and nowhere else, so put the dat
+	// files there first when they live in a system directory.
+	asset.EnsureCoreAssets(assetDir)
 	log.Info("Asset directory for %s: %v", "v2raya_core", assetDir)
 
 	// Prepare environment variables, filtering out duplicates
-	env := make([]string, 0, len(os.Environ())+5)
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, e := range os.Environ() {
 		// Skip existing V2RAY_LOCATION_ASSET, XRAY_LOCATION_ASSET, V2RAY_CONF_GEOLOADER
 		if strings.HasPrefix(e, "V2RAY_LOCATION_ASSET=") ||
@@ -281,9 +277,6 @@ func StartCoreProcess(ctx context.Context) (*os.Process, error) {
 	// Add asset directory to environment based on core type.
 	// v2raya_core is based on xray-core and uses XRAY_LOCATION_ASSET.
 	env = append(env, "XRAY_LOCATION_ASSET="+assetDir)
-	// Enable the private structured route-event channel in the bundled core.
-	// The service consumes these lines before forwarding regular core output.
-	env = append(env, "V2RAYA_LIVE_FLOW=1")
 
 	// Check memory and set geoloader mode
 	memstat, err := mem.VirtualMemory()
@@ -334,9 +327,9 @@ func getConnectedServerObjs() ([]serverObj.ServerObj, []serverInfo, error) {
 		return nil, nil, nil
 	}
 	serverInfos := make([]serverInfo, 0, css.Len())
-	serverObjs := make([]serverObj.ServerObj, 0, css.Len())
+	loc := configure.NewLocator()
 	for _, cs := range css.Get() {
-		sr, err := cs.LocateServerRaw()
+		sr, err := loc.Locate(cs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -344,9 +337,39 @@ func getConnectedServerObjs() ([]serverObj.ServerObj, []serverInfo, error) {
 			Info:         sr.ServerObj,
 			OutboundName: cs.Outbound,
 		})
-		serverObjs = append(serverObjs, sr.ServerObj)
+	}
+	serverInfos = applySelection(serverInfos, func(outbound string) string {
+		return configure.GetOutboundSetting(outbound).Selected
+	})
+	serverObjs := make([]serverObj.ServerObj, 0, len(serverInfos))
+	for _, info := range serverInfos {
+		serverObjs = append(serverObjs, info.Info)
 	}
 	return serverObjs, serverInfos, nil
+}
+
+// applySelection keeps, for a group whose setting selects one member, only
+// that member; a selection matching no member leaves the group balanced.
+func applySelection(serverInfos []serverInfo, selectedOf func(outbound string) string) []serverInfo {
+	selected := make(map[string]string)
+	matched := make(map[string]bool)
+	for _, info := range serverInfos {
+		if _, ok := selected[info.OutboundName]; !ok {
+			selected[info.OutboundName] = selectedOf(info.OutboundName)
+		}
+		link := selected[info.OutboundName]
+		if link != "" && info.Info.ExportToURL() == link {
+			matched[info.OutboundName] = true
+		}
+	}
+	kept := serverInfos[:0]
+	for _, info := range serverInfos {
+		if matched[info.OutboundName] && info.Info.ExportToURL() != selected[info.OutboundName] {
+			continue
+		}
+		kept = append(kept, info)
+	}
+	return kept
 }
 
 func NewTemplateFromConnectedServers(setting *configure.Setting) (tmpl *Template, err error) {

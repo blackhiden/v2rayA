@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -27,14 +28,16 @@ func updateSubscriptions() {
 		wg.Add(1)
 		go func(i int) {
 			control <- struct{}{}
-			err := service.UpdateSubscription(i, false)
-			if err != nil {
-				log.Info("[AutoUpdate] Subscriptions: Failed to update subscription -- ID: %d, err: %v", i, err)
-			} else {
-				log.Info("[AutoUpdate] Subscriptions: Complete updating subscription -- ID: %d, Address: %s", i, subs[i].Address)
-			}
-			wg.Done()
-			<-control
+			defer wg.Done()
+			defer func() { <-control }()
+			runSubscriptionUpdate(i, func() {
+				err := service.UpdateSubscription(i, false)
+				if err != nil {
+					log.Info("[AutoUpdate] Subscriptions: Failed to update subscription -- ID: %d, err: %v", i, err)
+				} else {
+					log.Info("[AutoUpdate] Subscriptions: Complete updating subscription -- ID: %d, Address: %s", i, subs[i].Address)
+				}
+			})
 		}(i)
 	}
 	wg.Wait()
@@ -46,13 +49,27 @@ func updateSubscriptions() {
 
 }
 
+func runSubscriptionUpdate(index int, update func()) (panicked bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Error("[AutoUpdate] subscription %d: panic: %v", index, recovered)
+			panicked = true
+		}
+	}()
+	update()
+	return false
+}
+
 func initUpdatingTicker() {
 	conf.TickerUpdateGFWList = time.NewTicker(24 * time.Hour * 365 * 100)
 	conf.TickerUpdateSubscription = time.NewTicker(24 * time.Hour * 365 * 100)
 	go func() {
 		for range conf.TickerUpdateGFWList.C {
-			_, err := dat.CheckAndUpdateGFWList("")
-			if err != nil {
+			version, err := dat.CheckAndUpdateGFWList("")
+			switch {
+			case errors.Is(err, dat.ErrGFWListUpToDate):
+				log.Info("[AutoUpdate] GFWList is already at %v", version)
+			case err != nil:
 				log.Info("[AutoUpdate] GFWList: %v", err)
 			}
 		}
@@ -60,6 +77,27 @@ func initUpdatingTicker() {
 	go func() {
 		for range conf.TickerUpdateSubscription.C {
 			updateSubscriptions()
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		var previous configure.RoutingASource
+		var lastAttempt time.Time
+		for range ticker.C {
+			source := configure.GetRoutingASource()
+			if source.URL == "" {
+				previous = source
+				continue
+			}
+			if source == previous && time.Since(lastAttempt) < configure.IntervalHours(source.IntervalHours) {
+				continue
+			}
+			previous = source
+			lastAttempt = time.Now()
+			if err := service.UpdateRoutingAFromSource(); err != nil {
+				log.Warn("[AutoUpdate] RoutingA: %v", err)
+			}
 		}
 	}()
 }
@@ -75,13 +113,17 @@ func checkUpdate() {
 		setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals ||
 		setting.Transparent == configure.TransparentGfwlist {
 		if setting.GFWListAutoUpdateMode == configure.AutoUpdateAtIntervals {
-			conf.TickerUpdateGFWList.Reset(time.Duration(setting.GFWListAutoUpdateIntervalHour) * time.Hour)
+			conf.TickerUpdateGFWList.Reset(configure.IntervalHours(setting.GFWListAutoUpdateIntervalHour))
 		}
 		switch setting.RulePortMode {
 		case configure.GfwlistMode:
 			go func() {
 				/* Update LoyalsoldierSite.dat */
 				localGFWListVersion, err := dat.CheckAndUpdateGFWList("")
+				if errors.Is(err, dat.ErrGFWListUpToDate) {
+					log.Info("PAC file is already at %v", localGFWListVersion)
+					return
+				}
 				if err != nil {
 					log.Warn("Failed to update PAC file: %v", err.Error())
 					return
@@ -98,7 +140,7 @@ func checkUpdate() {
 		setting.SubscriptionAutoUpdateMode == configure.AutoUpdateAtIntervals {
 
 		if setting.SubscriptionAutoUpdateMode == configure.AutoUpdateAtIntervals {
-			conf.TickerUpdateSubscription.Reset(time.Duration(setting.SubscriptionAutoUpdateIntervalHour) * time.Hour)
+			conf.TickerUpdateSubscription.Reset(configure.IntervalHours(setting.SubscriptionAutoUpdateIntervalHour))
 		}
 		go updateSubscriptions()
 	}

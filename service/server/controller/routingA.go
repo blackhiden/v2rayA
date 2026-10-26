@@ -1,39 +1,64 @@
 package controller
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
-	"github.com/v2rayA/RoutingA"
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/db/configure"
-	"regexp"
-	"strings"
+	"github.com/v2rayA/v2rayA/server/service"
 )
 
 func GetRoutingA(ctx *gin.Context) {
 	common.ResponseSuccess(ctx, gin.H{
 		"routingA": configure.GetRoutingA(),
+		"source":   configure.GetRoutingASource(),
 	})
 }
+func PostRoutingAImport(ctx *gin.Context) {
+	var source configure.RoutingASource
+	if err := ctx.ShouldBindJSON(&source); err != nil {
+		common.ResponseError(ctx, badRequest("source", "invalid RoutingA source"))
+		return
+	}
+	text, err := service.FetchRoutingA(source)
+	if err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+	common.ResponseSuccess(ctx, gin.H{"routingA": text})
+}
 func PutRoutingA(ctx *gin.Context) {
+	release, ok := beginMutation(ctx)
+	if !ok {
+		return
+	}
+	defer release()
 	var data struct {
-		RoutingA string `json:"routingA"`
+		RoutingA string                   `json:"routingA"`
+		Source   configure.RoutingASource `json:"source"`
 	}
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("routingA", "request body must be {\"routingA\": string}"))
 		return
 	}
-	// remove hardcode replacement and try parsing
-	lines := strings.Split(data.RoutingA, "\n")
-	hardcodeReplacement := regexp.MustCompile(`\$\$.+?\$\$`)
-	for i := range lines {
-		hardcodes := hardcodeReplacement.FindAllString(lines[i], -1)
-		for _, hardcode := range hardcodes {
-			lines[i] = strings.Replace(lines[i], hardcode, "", 1)
-		}
+	if data.Source.URL != "" && (data.Source.IntervalHours < 1 || data.Source.IntervalHours > 8760) {
+		common.ResponseError(ctx, badRequest("intervalHours", "RoutingA update interval must be between 1 and 8760 hours"))
+		return
 	}
-	_, err = RoutingA.Parse(strings.Join(lines, "\n"))
-	if err != nil {
+	if data.Source.URL != "" {
+		if err := service.ValidateRoutingASource(data.Source); err != nil {
+			common.ResponseError(ctx, badRequest("source", err))
+			return
+		}
+		data.Source.URL = strings.TrimSpace(data.Source.URL)
+	}
+	if data.Source.URL == "" {
+		data.Source = configure.RoutingASource{IntervalHours: 24}
+	}
+	lines := strings.Split(data.RoutingA, "\n")
+	if err := service.ValidateRoutingA(data.RoutingA); err != nil {
 		common.ResponseError(ctx, logError(err))
 		return
 	}
@@ -48,7 +73,7 @@ func PutRoutingA(ctx *gin.Context) {
 		}
 	}
 
-	err = configure.SetRoutingA(&data.RoutingA)
+	err = service.SaveRoutingA(data.RoutingA, data.Source)
 	if err != nil {
 		common.ResponseError(ctx, logError(err))
 		return

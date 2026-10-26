@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"net/http"
 	"sync"
 	"time"
 
@@ -24,16 +25,22 @@ func PostLogin(ctx *gin.Context) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
+	// the body is read before the one-at-a-time semaphore, so it is capped
+	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, 4096)
+	err := ctx.ShouldBindJSON(&data)
+	if err != nil {
+		err := badRequest("username and password", "request body must be {\"username\": string, \"password\": string}")
+		ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"code": common.FAIL, "message": err.Error(), "data": nil, "errorCode": "BAD_REQUEST",
+			"params": gin.H{"field": "username and password"},
+		})
+		return
+	}
 	loginSessions <- nil
 	defer func() {
 		time.Sleep(500 * time.Millisecond)
 		<-loginSessions
 	}()
-	err := ctx.ShouldBindJSON(&data)
-	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
-		return
-	}
 	if !configure.HasAnyAccounts() {
 		common.Response(ctx, common.UNAUTHORIZED, gin.H{
 			"first": true,
@@ -50,30 +57,6 @@ func PostLogin(ctx *gin.Context) {
 	})
 }
 
-/*修改密码*/
-func PutAccount(ctx *gin.Context) {
-	var data struct {
-		Password    string `json:"password"`
-		NewPassword string `json:"newPassword"`
-	}
-	err := ctx.ShouldBindJSON(&data)
-	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
-		return
-	}
-	if ok, err := service.ValidPasswordLength(data.Password); !ok {
-		common.ResponseError(ctx, logError(err))
-		return
-	}
-	username := ctx.GetString("Name")
-	if !service.IsValidAccount(username, data.Password) {
-		common.ResponseError(ctx, logError("wrong username or password"))
-		return
-	}
-	//TODO: modify password
-	common.ResponseSuccess(ctx, nil)
-}
-
 /*注册*/
 var muReg sync.Mutex
 
@@ -86,7 +69,7 @@ func PostAccount(ctx *gin.Context) {
 	defer muReg.Unlock()
 	err := ctx.ShouldBindJSON(&data)
 	if err != nil {
-		common.ResponseError(ctx, logError("bad request"))
+		common.ResponseError(ctx, badRequest("username and password", "request body must be {\"username\": string, \"password\": string}"))
 		return
 	}
 	if ok, err := service.ValidPasswordLength(data.Password); !ok {
@@ -94,7 +77,7 @@ func PostAccount(ctx *gin.Context) {
 		return
 	}
 	if configure.HasAnyAccounts() {
-		common.ResponseError(ctx, logError("register closed"))
+		common.ResponseError(ctx, common.Coded("ACCOUNT_EXISTS", logError("an account already exists; sign in instead"), nil))
 		return
 	}
 	token, err := service.Register(data.Username, data.Password)
