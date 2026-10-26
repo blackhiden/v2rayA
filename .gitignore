@@ -68,4 +68,44 @@ docs/LIVE_FLOW_SECURITY_CHECKLIST.md
 docs/LIVE_FLOW_SESSION_RESUME.md
 docs/LIVE_FLOW_USER_GUIDE.md
 gui/package-lock.json
-data
+
+# ---------------------------------------------------------------------------
+# Local development persistence
+# ---------------------------------------------------------------------------
+# Local runtime data (SQLite DB, config, WAL/SHM files). This directory is
+# created by the service at runtime and must never be tracked by git.
+/data/
+
+# Local dev config directory (used with `--config ./dev-config` or
+# `V2RAYA_CONFIG_DIR=./dev-config`). Keeps dev state out of the repo so
+# upstream merges never touch it.
+/dev-config/
+
+# Local dev database and state files (any location)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bolt
+*.boltdb
+
+# Local dev environment overrides
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local dev scripts and notes (not for upstream)
+/dev-*.sh
+/dev-*.ps1
+/dev-*.md
+/dev-*.json
+/dev-*.yaml
+/dev-*.yml
+
+# Local v2rayA binaries (dev builds)
+/v2raya-dev
+/v2raya_core-dev
+/v2raya-dev.exe
+/v2raya_core-dev.exe

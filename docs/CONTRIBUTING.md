@@ -118,6 +118,32 @@ ls ~/.config/v2raya/db.sqlite
 rm ~/.config/v2raya/db.sqlite
 ```
 
+### Keeping Local Development Persistent
+
+v2rayA stores all user data (servers, subscriptions, settings, routing rules)
+locally in a config directory. To keep that data intact when merging from
+upstream:
+
+1. **Always use a dedicated dev config directory** — never the repo tree:
+   ```bash
+   ./v2raya-dev --lite --config ~/.config/v2raya-dev
+   ```
+   The `/dev-config/` directory inside the repo is git-ignored and safe to use
+   for quick iteration, but a path outside the repo is always safest.
+
+2. **Keep the database out of git** — `*.db`, `*.sqlite`, `*.bolt`, and their
+   WAL/SHM sidecars are already in `.gitignore`. If `git status` ever shows a
+   database file, add it to `.gitignore` before committing.
+
+3. **Name local scripts with a `dev-` prefix** — `dev-*.sh`, `dev-*.ps1`,
+   `dev-*.md`, etc. are git-ignored, so they survive merges automatically.
+
+4. **When merging from upstream**, your config and data are never touched by
+   git because they live outside the repo or in git-ignored paths. Only code
+   files can conflict, and those are resolved normally.
+
+See [DEV_PERSISTENCE.md](DEV_PERSISTENCE.md) for the full guide.
+
 ## Project Structure
 
 ```

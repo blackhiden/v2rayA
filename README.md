@@ -48,6 +48,7 @@ Please refer to [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed archit
 - [Specification](docs/SPECIFICATION.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Local Development Persistence](docs/DEV_PERSISTENCE.md)
 - [Live Flow Visualization Plan](docs/PHASE_LIVE_FLOW_PLAN.md)
 - [Live Flow Implementation Guide](docs/LIVE_FLOW_IMPLEMENTATION.md)
 - [Live Flow User Guide](docs/LIVE_FLOW_USER_GUIDE.md)
