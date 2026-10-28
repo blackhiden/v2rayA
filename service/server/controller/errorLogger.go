@@ -16,6 +16,10 @@ func logError(err interface{}) error {
 	return e
 }
 
+func logInfo(format string, args ...interface{}) {
+	log.Info(format, args...)
+}
+
 func badRequest(field string, err interface{}) error {
 	return common.Coded("BAD_REQUEST", logError(err), map[string]interface{}{"field": field})
 }

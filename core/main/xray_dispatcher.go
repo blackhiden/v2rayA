@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	xnet "github.com/arsydoni4326-alt/xray-core/common/net"
-	"github.com/arsydoni4326-alt/xray-core/common/net/cnc"
-	"github.com/arsydoni4326-alt/xray-core/common/session"
-	xcore "github.com/arsydoni4326-alt/xray-core/core"
-	"github.com/arsydoni4326-alt/xray-core/features/routing"
+	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/net/cnc"
+	"github.com/xtls/xray-core/common/session"
+	xcore "github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/routing"
 )
 
 // xrayDispatcherAdapter implements dns.RouteDispatcher using xray-core's

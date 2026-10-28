@@ -146,9 +146,10 @@ func TestSetPortsRestoresAfterReloadFailure(t *testing.T) {
 func TestPutOutboundRestoresAfterReloadFailure(t *testing.T) {
 	runningCoreWithInvalidConnection(t)
 	previous := configure.OutboundSetting{
-		ProbeURL:      "https://previous.example/ping",
-		ProbeInterval: "30s",
-		Type:          configure.LeastPing,
+		ProbeURL:            "https://previous.example/ping",
+		ProbeInterval:       "30s",
+		Type:                configure.LeastPing,
+		LoadBalanceStrategy: configure.LoadBalanceStrategyRoundRobin,
 	}
 	if err := configure.SetOutboundSetting("proxy", previous); err != nil {
 		t.Fatal(err)

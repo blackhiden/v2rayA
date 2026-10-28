@@ -311,6 +311,7 @@ type OutboundObject struct {
 	StreamSettings *StreamSettings `json:"streamSettings,omitempty"`
 	ProxySettings  *ProxySettings  `json:"proxySettings,omitempty"`
 	Mux            *Mux            `json:"mux,omitempty"`
+	Balancers      []string        `json:"-"`
 }
 type OutboundUser struct {
 	User  string `json:"user"`

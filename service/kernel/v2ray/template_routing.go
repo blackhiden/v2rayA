@@ -20,13 +20,13 @@ import (
 func (t *Template) outNames() map[string]bool {
 	tags := make(map[string]bool)
 	for _, o := range t.Outbounds {
-		if len(o.Balancers) > 0 {
-			for _, groupName := range o.Balancers {
-				tags[groupName] = true
-			}
-		} else {
-			tags[o.Tag] = false
-		}
+		tags[o.Tag] = false
+	}
+	for _, group := range t.balancerGroups {
+		// Routing rules refer to the group tag, while selector members remain
+		// implementation details of the balancer.
+		tags[group.Tag] = true
+		tags[group.OutboundName] = true
 	}
 	return tags
 }
@@ -40,19 +40,23 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 	// deduplicate
 	m := make(map[string]struct{})
 
+	memberToGroup := make(map[string]string)
+	for _, group := range t.balancerGroups {
+		for _, member := range group.Selector {
+			memberToGroup[member] = group.Tag
+		}
+	}
 	for _, o := range t.Outbounds {
 		switch o.Tag {
 		case "direct", "block", "dns-out":
 			continue
 		}
-		if len(o.Balancers) > 0 {
-			for _, v := range o.Balancers {
-				if _, ok := m[v]; !ok {
-					if filter(v, true) {
-						return v, true
-					}
-					m[v] = struct{}{}
+		if groupTag, ok := memberToGroup[o.Tag]; ok {
+			if _, seen := m[groupTag]; !seen {
+				if filter(groupTag, true) {
+					return groupTag, true
 				}
+				m[groupTag] = struct{}{}
 			}
 		} else {
 			if filter(o.Tag, false) {
@@ -61,6 +65,50 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 		}
 	}
 	return
+}
+
+// ActiveProxyOutboundName resolves the saved active group to an outbound tag in
+// this template. A selected group without connected members cannot be emitted,
+// so it falls back to the first configured proxy outbound until that group has
+// members again.
+func (t *Template) ActiveProxyOutboundName() string {
+	return t.activeProxyOutboundName(configure.GetActiveOutboundName())
+}
+
+func (t *Template) activeProxyOutboundName(activeOutbound string) string {
+	if balancerTag, ok := t.balancerTagForOutbound(activeOutbound); ok {
+		return balancerTag
+	}
+	for _, outbound := range t.Outbounds {
+		if outbound.Tag == activeOutbound {
+			return activeOutbound
+		}
+	}
+	firstOutbound, _ := t.FirstProxyOutboundName(nil)
+	return firstOutbound
+}
+
+// DefaultProxyOutboundName translates the reserved RoutingA "proxy" target to
+// the selected active group. Named outbound groups remain explicit targets.
+func (t *Template) DefaultProxyOutboundName(outbound string) string {
+	return t.defaultProxyOutboundName(outbound, configure.GetActiveOutboundName())
+}
+
+func (t *Template) defaultProxyOutboundName(outbound, activeOutbound string) string {
+	if outbound == configure.DefaultOutboundName {
+		return t.activeProxyOutboundName(activeOutbound)
+	}
+	return outbound
+}
+
+// balancerTagForOutbound returns the balancer tag for an outbound group name.
+func (t *Template) balancerTagForOutbound(outboundName string) (string, bool) {
+	for _, group := range t.balancerGroups {
+		if outboundName == group.OutboundName || outboundName == group.Tag {
+			return group.Tag, true
+		}
+	}
+	return "", false
 }
 
 // dnsRuleToLines converts a configure.DnsRule to the "server -> outbound" line format
@@ -588,10 +636,10 @@ func (t *Template) setWhitelistRouting(whitelist []Addr) {
 }
 
 func (t *Template) setGroupRouting() {
-	outbounds := t.outNames()
 	for i := range t.Routing.Rules {
-		if t.Routing.Rules[i].OutboundTag != "" && outbounds[t.Routing.Rules[i].OutboundTag] == true {
-			t.Routing.Rules[i].BalancerTag, t.Routing.Rules[i].OutboundTag = t.Routing.Rules[i].OutboundTag, ""
+		if balancerTag, ok := t.balancerTagForOutbound(t.Routing.Rules[i].OutboundTag); ok {
+			t.Routing.Rules[i].BalancerTag = balancerTag
+			t.Routing.Rules[i].OutboundTag = ""
 		}
 	}
 }

@@ -160,38 +160,45 @@ func NewProcess(tmpl *Template,
 }
 
 type logInfoWriter struct {
+	mu        sync.Mutex
+	remainder string
 }
 
-func (w logInfoWriter) Write(p []byte) (n int, err error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	s := string(p)
-	// trim the ending \n
-	length := len(s)
-	if s[length-1] == '\n' {
-		s = s[:length-1]
-	}
-	// print each line separately
-	lines := strings.Split(s, "\n")
-	for _, line := range lines {
-		// remove timestamp
-		fields := strings.SplitN(line, " ", 3)
-		if len(fields) >= 3 {
-			if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
-				log.Info("%v", fields[2])
-			} else {
-				log.Info("%v", line)
-			}
-		} else {
-			log.Info("%v", line)
-		}
+func (w *logInfoWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
+	w.remainder += string(p)
+	lines := strings.Split(w.remainder, "\n")
+	w.remainder = lines[len(lines)-1]
+	// Avoid retaining an unbounded malformed core output line.
+	if len(w.remainder) > 64*1024 {
+		log.Warn("v2ray-core: discarded oversized output line")
+		w.remainder = ""
+	}
+
+	for _, line := range lines[:len(lines)-1] {
+		w.handleLine(line)
 	}
 	return len(p), nil
 }
 
-var logWriter logInfoWriter
+func (w *logInfoWriter) handleLine(line string) {
+	if line == "" || ConsumeCoreLiveFlowEvent(line) {
+		return
+	}
+	// Remove a conventional core timestamp before forwarding the line.
+	fields := strings.SplitN(line, " ", 3)
+	if len(fields) >= 3 {
+		if _, err := time.Parse("2006/01/02 15:04:05", fields[0]+" "+fields[1]); err == nil {
+			log.Info("%v", fields[2])
+			return
+		}
+	}
+	log.Info("%v", line)
+}
+
+var logWriter = &logInfoWriter{}
 
 func (p *Process) Close() error {
 	p.mutex.Lock()

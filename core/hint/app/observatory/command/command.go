@@ -17,11 +17,11 @@ import (
 	"context"
 
 	"github.com/v2rayA/v2raya-core/hint/app/observatory/multiobservatory"
-	xray_obs "github.com/arsydoni4326-alt/xray-core/app/observatory"
-	xray_obs_cmd "github.com/arsydoni4326-alt/xray-core/app/observatory/command"
-	"github.com/arsydoni4326-alt/xray-core/common"
-	core "github.com/arsydoni4326-alt/xray-core/core"
-	"github.com/arsydoni4326-alt/xray-core/features/extension"
+	xray_obs "github.com/xtls/xray-core/app/observatory"
+	xray_obs_cmd "github.com/xtls/xray-core/app/observatory/command"
+	"github.com/xtls/xray-core/common"
+	core "github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/extension"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )

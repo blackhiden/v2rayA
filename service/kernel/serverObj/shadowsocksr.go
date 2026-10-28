@@ -62,6 +62,7 @@ func (s *ShadowsocksR) NeedPluginPort() bool { return false }
 func (s *ShadowsocksR) ProtoToShow() string { return "SSR (unsupported)" }
 
 func (s *ShadowsocksR) GetProtocol() string { return s.Protocol }
+func (s *ShadowsocksR) GetSecurity() string { return s.Cipher }
 func (s *ShadowsocksR) GetHostname() string { return s.Server }
 func (s *ShadowsocksR) GetPort() int        { return s.Port }
 func (s *ShadowsocksR) GetName() string     { return s.Name }

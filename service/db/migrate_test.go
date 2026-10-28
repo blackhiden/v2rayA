@@ -79,9 +79,10 @@ func TestBoltMigrationPublishesVerifiedDatabaseAndRestarts(t *testing.T) {
 		}
 	}
 	wantSetting := configure.OutboundSetting{
-		ProbeURL:      "https://example.test/ping",
-		ProbeInterval: "45s",
-		Type:          configure.LeastPing,
+		ProbeURL:            "https://example.test/ping",
+		ProbeInterval:       "45s",
+		Type:                configure.LeastPing,
+		LoadBalanceStrategy: configure.LoadBalanceStrategyRoundRobin,
 	}
 	if got := configure.GetOutboundSetting("proxy"); got != wantSetting {
 		t.Fatalf("outbound setting: got %+v, want %+v", got, wantSetting)
