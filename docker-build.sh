@@ -18,7 +18,7 @@ fi
 V2RAYA_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
 XCORE_VERSION="$(git -C core/xray describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")"
 XCORE_COMMIT="$(git -C core/xray rev-parse --short HEAD)"
-BASE_NAME="ghcr.io/blackhiden/v2rayatest"
+BASE_NAME="ghcr.io/blackhiden/v2raya"
 echo -n "Enter you version: "
 read -r VERSION
 if [ ! -z $VERSION ]; then
