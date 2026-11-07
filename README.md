@@ -46,6 +46,9 @@ Please refer to [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed archit
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Specification](docs/SPECIFICATION.md)
+- [Code Graph](CODE_GRAPH.md)
+- [Database & Configuration Schema](SCHEMA.md)
+- [Merge Preservation Guide](MERGE-PRESERVATION.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Live Flow Visualization Plan](docs/PHASE_LIVE_FLOW_PLAN.md)
