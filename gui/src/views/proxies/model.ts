@@ -11,6 +11,8 @@ import ServerDialog from "@/dialogs/Server/index.vue";
 import SharingDialog from "@/dialogs/Sharing.vue";
 import SubscriptionDialog from "@/dialogs/Subscription.vue";
 import SubscriptionSettings from "@/dialogs/SubscriptionSettings.vue";
+import BulkAddByLatencyDialog from "@/dialogs/BulkAddByLatency.vue";
+import BulkRemoveByLatencyDialog from "@/dialogs/BulkRemoveByLatency.vue";
 import { useAppStore } from "@/stores/app";
 import {
   filterRows,
@@ -352,6 +354,33 @@ export function useProxies() {
       await sync();
     });
   }
+  
+  async function bulkAddByLatency() {
+    await run(async () => {
+      if (
+        await open<boolean>(
+          BulkAddByLatencyDialog,
+          { source: source.value },
+          { width: 560 },
+        ).result
+      )
+        await sync();
+    });
+  }
+
+  async function bulkRemoveByLatency() {
+    await run(async () => {
+      if (
+        await open<boolean>(
+          BulkRemoveByLatencyDialog,
+          { source: source.value },
+          { width: 560 },
+        ).result
+      )
+        await sync();
+    });
+  }
+
   return {
     store,
     nodes,
@@ -390,5 +419,7 @@ export function useProxies() {
     subscriptionSettings,
     nodeAction,
     subscriptionAction,
+    bulkAddByLatency,
+    bulkRemoveByLatency,
   };
 }

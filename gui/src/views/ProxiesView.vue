@@ -6,6 +6,7 @@ import {
   mdiChevronDown,
   mdiContentCopy,
   mdiDownloadOutline,
+  mdiDotsVertical,
   mdiMagnify,
   mdiPlus,
   mdiServerNetworkOutline,
@@ -45,6 +46,8 @@ const {
   canDelete,
   preferred,
   sync,
+  bulkAddByLatency,
+  bulkRemoveByLatency,
 } = model;
 const disabled = computed(() => busy.value || loading.value);
 // Ctrl/Cmd+A selects every listed node, Escape clears (list view), "/" goes to the search
@@ -97,6 +100,27 @@ onMounted(sync);
         @click="model.importNodes()"
         >{{ t("operations.import") }}</v-btn
       >
+      <v-menu>
+        <template #activator="{ props: menu }">
+          <v-btn
+            v-bind="menu"
+            variant="text"
+            :icon="mdiDotsVertical"
+            :disabled="disabled"
+            :aria-label="t('operations.moreActions')"
+          />
+        </template>
+        <v-list density="compact" min-width="240">
+          <v-list-item
+            :title="t('bulkAddByLatency.title')"
+            @click="bulkAddByLatency"
+          />
+          <v-list-item
+            :title="t('bulkRemoveByLatency.title')"
+            @click="bulkRemoveByLatency"
+          />
+        </v-list>
+      </v-menu>
     </div>
     <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">
       {{ loadError }}

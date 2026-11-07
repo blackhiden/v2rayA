@@ -125,6 +125,13 @@ export const deleteOutbound = (
   o: RequestOptions = {},
 ) => call<unknown>({ url: "outbound", method: "delete", data: body, ...o });
 
+export const bulkRemoveByLatency = (body: {
+  outbound: string;
+  maxLatencyMs: number;
+  serversToCheck: { id: number; _type: string; sub: number }[];
+}) => call<unknown>({ url: "bulkRemoveByLatency", method: "post", data: body });
+
+
 // ---- settings ------------------------------------------------------------------
 export const getSetting = () =>
   call<SettingResponse>({ url: "setting", method: "get" });
