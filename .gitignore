@@ -111,3 +111,4 @@ gui/package-lock.json
 
 # Release workflow documentation (not for upstream)
 release-workflow.md
+merge-upstream.md
