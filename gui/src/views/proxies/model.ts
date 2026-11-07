@@ -360,7 +360,11 @@ export function useProxies() {
       if (
         await open<boolean>(
           BulkAddByLatencyDialog,
-          { source: source.value },
+          {
+            source: source.value,
+            rows: rows.value,
+            subscriptions: subscriptions.value,
+          },
           { width: 560 },
         ).result
       )
@@ -373,7 +377,11 @@ export function useProxies() {
       if (
         await open<boolean>(
           BulkRemoveByLatencyDialog,
-          { source: source.value },
+          {
+            source: source.value,
+            rows: rows.value,
+            subscriptions: subscriptions.value,
+          },
           { width: 560 },
         ).result
       )

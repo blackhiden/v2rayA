@@ -74,6 +74,7 @@ import logo from "@/assets/img/v2raya-icon.svg";
 import PortsDialog from "@/dialogs/settings/Ports.vue";
 import AboutView from "@/views/AboutView.vue";
 import DashboardView from "@/views/DashboardView.vue";
+import LiveFlowView from "@/views/LiveFlowView.vue";
 import LogsView from "@/views/LogsView.vue";
 import ProxiesView from "@/views/ProxiesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
@@ -257,6 +258,9 @@ async function startSession() {
   void getOutbounds()
     .then((r) => {
       store.setOutbounds(r.outbounds);
+      if (r.activeOutboundName) {
+        store.activeOutboundName = r.activeOutboundName;
+      }
       if (shouldShowOnboarding())
         openDialog(OnboardingDialog, {}, { width: 560 });
     })
@@ -501,6 +505,7 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", openHash));
             'page__body--wide': [
               'dashboard',
               'proxies',
+              'liveflow',
               'subscriptions',
             ].includes(store.view),
           }"
@@ -513,6 +518,10 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", openHash));
           <ProxiesView
             v-else-if="store.view === 'proxies'"
             ref="pageRef"
+            :key="sessionSerial"
+          />
+          <LiveFlowView
+            v-else-if="store.view === 'liveflow'"
             :key="sessionSerial"
           />
           <SubscriptionsView

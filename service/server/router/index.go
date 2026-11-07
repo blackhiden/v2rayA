@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -169,6 +170,38 @@ func ServeGUI(r gin.IRoutes) {
 				c.Data(http.StatusOK, "image/x-icon", favData)
 			})
 		}
+		// Serve root assets like manifest.webmanifest, sw.js, pwa-*.png, robots.txt, etc.
+		if entries, dirErr := fs.ReadDir(webFS, "."); dirErr == nil {
+			for _, entry := range entries {
+				if entry.IsDir() || entry.Name() == "index.html" || entry.Name() == "favicon.ico" {
+					continue
+				}
+				fileName := entry.Name()
+				r.GET("/"+fileName, func(c *gin.Context) {
+					f, err := webFS.Open(fileName)
+					if err != nil {
+						c.Status(http.StatusNotFound)
+						return
+					}
+					defer f.Close()
+					data, err := io.ReadAll(f)
+					if err != nil {
+						c.Status(http.StatusInternalServerError)
+						return
+					}
+					ext := filepath.Ext(fileName)
+					contentType := mime.TypeByExtension(ext)
+					if contentType == "" {
+						if ext == ".webmanifest" {
+							contentType = "application/manifest+json"
+						} else {
+							contentType = http.DetectContentType(data)
+						}
+					}
+					c.Data(http.StatusOK, contentType, data)
+				})
+			}
+		}
 	} else {
 		if _, err := os.Stat(webDir); os.IsNotExist(err) {
 			log.Warn("web files cannot be found at %v. web UI cannot be served", webDir)
@@ -202,6 +235,16 @@ func ServeGUI(r gin.IRoutes) {
 			favPath := filepath.Join(webDir, "favicon.ico")
 			if _, favErr := os.Stat(favPath); favErr == nil {
 				r.StaticFile("/favicon.ico", favPath)
+			}
+			if entries, dirErr := os.ReadDir(webDir); dirErr == nil {
+				for _, entry := range entries {
+					if entry.IsDir() || entry.Name() == "index.html" || entry.Name() == "favicon.ico" {
+						continue
+					}
+					fileName := entry.Name()
+					filePath := filepath.Join(webDir, fileName)
+					r.StaticFile("/"+fileName, filePath)
+				}
 			}
 		}
 	}
@@ -303,11 +346,13 @@ func Run() error {
 		auth.PUT("routingA", controller.PutRoutingA)
 		auth.GET("outbounds", controller.GetOutbounds)
 		auth.GET("outbound", controller.GetOutbound)
+		auth.PUT("outbound/active", controller.SetActiveOutbound)
 		auth.POST("outbound", controller.PostOutbound)
 		auth.PUT("outbound", controller.PutOutbound)
 		auth.PUT("outboundConnections", controller.PutOutboundConnections)
 		auth.PUT("outboundSelection", controller.PutOutboundSelection)
 		auth.DELETE("outbound", controller.DeleteOutbound)
+		auth.POST("bulkRemoveByLatency", controller.PostBulkRemoveByLatency)
 		auth.GET("message", controller.WsMessage)
 		auth.GET("live-flow", controller.WsLiveFlow)
 		auth.GET("logger", controller.GetLogger)

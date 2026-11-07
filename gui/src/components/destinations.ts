@@ -7,6 +7,7 @@ import {
   mdiBookOpenPageVariantOutline,
   mdiCogOutline,
   mdiCog,
+  mdiPulse,
   mdiRss,
   mdiRssBox,
   mdiScriptTextOutline,
@@ -43,6 +44,12 @@ export const destinations: Destination[] = [
     label: "common.proxies",
     icon: mdiServerNetworkOutline,
     activeIcon: mdiServerNetwork,
+  },
+  {
+    view: "liveflow",
+    label: "common.liveFlow",
+    icon: mdiPulse,
+    activeIcon: mdiPulse,
   },
   {
     view: "subscriptions",

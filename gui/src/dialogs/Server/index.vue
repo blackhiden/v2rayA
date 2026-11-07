@@ -58,6 +58,10 @@ const loading = ref(props.which !== null);
 const saving = ref(false);
 const activeForm = computed(() => forms[protocol.value]);
 const activeKey = computed(() => modelKey(protocol.value));
+const protocolItems = protocols.map((p) => ({
+  value: p,
+  title: protocolLabels[p],
+}));
 
 onMounted(async () => {
   // a node that could not be loaded must not be saved over from the
@@ -108,7 +112,7 @@ async function save() {
     <v-card-text class="px-6 pb-0">
       <v-select
         v-model="protocol"
-        :items="protocols.map((p) => ({ value: p, title: protocolLabels[p] }))"
+        :items="protocolItems"
         :label="t('server.protocol')"
         :readonly="readonly"
         hide-details

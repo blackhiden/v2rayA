@@ -17,6 +17,8 @@ const setting = reactive<OutboundSetting>({
   probeURL: "",
   probeInterval: "",
   type: "leastping",
+  loadBalanceEnabled: false,
+  loadBalanceStrategy: "roundrobin",
 });
 const form = ref<{ validate(): Promise<{ valid: boolean }> } | null>(null);
 const saving = ref(false);
@@ -77,6 +79,21 @@ async function save() {
             { value: 'leastping', title: t('setting.options.leastPing') },
           ]"
           :label="t('outbound.type')"
+        />
+        <v-switch
+          v-model="setting.loadBalanceEnabled"
+          :label="t('outbound.loadBalance')"
+          color="primary"
+          hide-details
+          class="mb-2"
+        />
+        <v-select
+          v-if="setting.loadBalanceEnabled"
+          v-model="setting.loadBalanceStrategy"
+          :items="[
+            { value: 'roundrobin', title: t('outbound.roundRobin') },
+          ]"
+          :label="t('outbound.loadBalanceStrategy')"
         />
       </v-form>
     </v-card-text>

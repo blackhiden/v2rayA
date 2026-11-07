@@ -27,6 +27,7 @@ export type ThemePreference = "auto" | "light" | "dark";
 export type View =
   | "dashboard"
   | "proxies"
+  | "liveflow"
   | "subscriptions"
   | "settings"
   | "logs"
@@ -44,6 +45,7 @@ export const useAppStore = defineStore("app", {
     networkPaused: false,
     connectedServer: [] as Which[],
     outboundName: "proxy",
+    activeOutboundName: "proxy",
     outbounds: ["proxy"] as string[],
     /** the last observatory frame of each outbound group: what the core sees of its members */
     observatory: {} as Record<string, OutboundStatus[]>,

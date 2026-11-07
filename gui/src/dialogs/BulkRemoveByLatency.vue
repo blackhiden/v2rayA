@@ -4,21 +4,25 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { mdiAlertCircle, mdiAlert, mdiCheckCircle } from "@mdi/js";
-import { bulkRemoveByLatency, getOutbounds } from "@/api";
-import type { Which } from "@/api/types";
+import { bulkRemoveByLatency, getOutbounds, getTouch } from "@/api";
+import type { Touch, TouchSubscription } from "@/api/types";
 import { errorText } from "@/api/errors";
 import { useNotify } from "@/composables";
 import { useAppStore } from "@/stores/app";
-import { useNodes, type Row } from "@/views/nodes/model";
+import type { Row } from "@/views/nodes/model";
 
 defineOptions({ name: "BulkRemoveByLatencyDialog" });
 
 interface Props {
   source?: string;
+  rows?: Row[];
+  subscriptions?: TouchSubscription[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
   source: "all",
+  rows: () => [],
+  subscriptions: () => [],
 });
 
 const emit = defineEmits<{ close: [success?: boolean] }>();
@@ -26,29 +30,63 @@ const emit = defineEmits<{ close: [success?: boolean] }>();
 const { t } = useI18n();
 const notify = useNotify();
 const store = useAppStore();
-const nodes = useNodes();
 
 const maxLatency = ref(500);
-const selectedOutbound = ref("proxy");
-const outbounds = ref<string[]>(["proxy"]);
+const selectedOutbound = ref(store.outboundName || "proxy");
+const outbounds = ref<string[]>(
+  store.outbounds.length ? [...store.outbounds] : ["proxy"],
+);
+const touchFallback = ref<Touch | null>(null);
 const saving = ref(false);
+
+function getAllServers(): Row[] {
+  let all: Row[];
+  if (props.rows && props.rows.length > 0) {
+    all = props.rows;
+  } else if (touchFallback.value) {
+    all = [
+      ...touchFallback.value.servers,
+      ...touchFallback.value.subscriptions.flatMap((s) => s.servers),
+    ];
+  } else {
+    all = [];
+  }
+
+  if (props.source === "local") {
+    return all.filter((r) => r._type === "server");
+  } else if (props.source === "all") {
+    return all;
+  } else {
+    const subs = props.subscriptions.length
+      ? props.subscriptions
+      : touchFallback.value?.subscriptions ?? [];
+    const subIdx = subs.findIndex((s) => s.address === props.source);
+    if (subIdx >= 0) {
+      return all.filter(
+        (r) => r._type === "subscriptionServer" && r.sub === subIdx,
+      );
+    }
+    return all;
+  }
+}
 
 const hasLatencyData = computed(() => {
   return getAllServers().some(
-    (s) => s.pingLatency && s.pingLatency.endsWith("ms"),
+    (s) =>
+      s.pingLatency &&
+      (s.pingLatency.endsWith("ms") || s.pingLatency === "TIMEOUT"),
   );
 });
 
 const connectedInGroup = computed(() => {
-  return store.connectedServer
-    .filter((w) => (w.outbound || "proxy") === selectedOutbound.value)
-    .map((w) => {
-      const servers = getAllServers();
-      return servers.find(
-        (s) => s.id === w.id && s._type === w._type && (s.sub ?? 0) === (w.sub ?? 0),
-      );
-    })
-    .filter((s): s is Row => s !== null && s !== undefined);
+  const existingInGroup = new Set(
+    store.connectedServer
+      .filter((w) => (w.outbound || "proxy") === selectedOutbound.value)
+      .map((w) => `${w._type}-${w.id}-${w.sub || 0}`),
+  );
+  return getAllServers().filter((s) =>
+    existingInGroup.has(`${s._type}-${s.id}-${s.sub || 0}`),
+  );
 });
 
 const serversToRemove = computed(() => {
@@ -57,7 +95,7 @@ const serversToRemove = computed(() => {
     if (s.pingLatency === "TIMEOUT") return true;
     if (!s.pingLatency.endsWith("ms")) return true;
     const latency = parseInt(s.pingLatency, 10);
-    return !isNaN(latency) && latency > maxLatency.value;
+    return !isNaN(latency) && latency >= maxLatency.value;
   });
 });
 
@@ -68,29 +106,21 @@ const wouldEmptyGroup = computed(() => {
   );
 });
 
-function getAllServers(): Row[] {
-  const touch = nodes.touch.value;
-  if (props.source === "local") {
-    return touch.servers;
-  } else if (props.source === "all") {
-    return [
-      ...touch.servers,
-      ...touch.subscriptions.flatMap((s) => s.servers),
-    ];
-  } else {
-    const sub = touch.subscriptions.find(
-      (s) => s.address === props.source,
-    );
-    return sub ? sub.servers : [];
-  }
-}
-
 onMounted(async () => {
   try {
     const res = await getOutbounds();
-    outbounds.value = res.outbounds;
+    if (res?.outbounds?.length) {
+      outbounds.value = res.outbounds;
+    }
     if (!outbounds.value.includes(selectedOutbound.value)) {
       selectedOutbound.value = outbounds.value[0] || "proxy";
+    }
+    if (!props.rows || props.rows.length === 0) {
+      const touchRes = await getTouch();
+      touchFallback.value = touchRes.touch;
+      if (!store.connectedServer.length && touchRes.touch.connectedServer) {
+        store.connectedServer = touchRes.touch.connectedServer;
+      }
     }
   } catch (err) {
     notify.warning(errorText(err));
@@ -104,7 +134,7 @@ async function confirm() {
     const touches = serversToRemove.value.map((s) => ({
       id: s.id,
       _type: s._type,
-      sub: s._type === "subscriptionServer" ? s.sub ?? 0 : 0,
+      sub: s._type === "subscriptionServer" ? (s.sub ?? 0) : 0,
     }));
 
     await bulkRemoveByLatency({
@@ -182,6 +212,26 @@ async function confirm() {
         >
           {{ t("bulkRemoveByLatency.wouldEmptyGroup") }}
         </v-alert>
+        <div class="mt-2" style="max-height: 160px; overflow-y: auto;">
+          <v-list density="compact" bg-color="transparent">
+            <v-list-item
+              v-for="s in serversToRemove"
+              :key="`${s._type}-${s.id}-${s.sub || 0}`"
+              :title="s.name || s.address"
+              density="compact"
+              class="px-1"
+            >
+              <template #append>
+                <span
+                  :class="s.pingLatency === 'TIMEOUT' || !s.pingLatency ? 'text-warning' : 'text-error'"
+                  class="md3-label-medium"
+                >
+                  {{ s.pingLatency || 'Timeout/Error' }}
+                </span>
+              </template>
+            </v-list-item>
+          </v-list>
+        </div>
       </v-alert>
 
       <v-alert

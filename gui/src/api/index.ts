@@ -98,13 +98,24 @@ export const deleteV2ray = () =>
 
 // ---- outbound groups ---------------------------------------------------------
 export const getOutbounds = () =>
-  call<{ outbounds: string[] }>({ url: "outbounds", method: "get" });
+  call<{ outbounds: string[]; activeOutboundName?: string }>({
+    url: "outbounds",
+    method: "get",
+  });
+export const putActiveOutbound = (body: { activeOutboundName: string }) =>
+  call<{ activeOutboundName: string }>({
+    url: "outbound/active",
+    method: "put",
+    data: body,
+  });
 export interface OutboundSetting {
   probeURL: string;
   probeInterval: string;
   type: string;
   /** the share link of the member routed through alone; empty balances */
   selected?: string;
+  loadBalanceEnabled?: boolean;
+  loadBalanceStrategy?: string;
 }
 export const getOutbound = (outbound: string) =>
   call<{ setting: OutboundSetting }>({

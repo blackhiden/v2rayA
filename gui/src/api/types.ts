@@ -27,6 +27,10 @@ export interface TouchServer {
   pingLatency: string;
   sub?: number;
   connected?: boolean;
+  disableReason?: string;
+  protocol?: string;
+  security?: string;
+  encryptions?: string[];
 }
 
 /** touch.Subscription */

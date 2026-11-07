@@ -1,217 +1,187 @@
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+import {
+  mdiCheck,
+  mdiCogOutline,
+  mdiDeleteOutline,
+  mdiPlus,
+  mdiRadioboxBlank,
+  mdiRadioboxMarked,
+} from "@mdi/js";
+import { putActiveOutbound } from "@/api";
+import { errorText } from "@/api/errors";
+import { useDialog, useNotify, useOutboundGroups } from "@/composables";
+import OutboundGroupDialog from "@/dialogs/OutboundGroup.vue";
+import { useAppStore } from "@/stores/app";
+
+defineOptions({ name: "ProxyGroupPanel" });
+
+const emit = defineEmits<{ close: [] }>();
+
+const { t } = useI18n();
+const notify = useNotify();
+const store = useAppStore();
+const { open: openDialog } = useDialog();
+const groups = useOutboundGroups();
+
+const saving = ref(false);
+
+const memberCounts = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const group of store.outbounds) {
+    counts[group] = store.connectedServer.filter(
+      (w) => (w.outbound || "proxy") === group,
+    ).length;
+  }
+  return counts;
+});
+
+async function selectActiveGroup(group: string) {
+  if (saving.value || group === store.activeOutboundName) return;
+  saving.value = true;
+  const previous = store.activeOutboundName;
+  store.activeOutboundName = group;
+  try {
+    const res = await putActiveOutbound({ activeOutboundName: group });
+    store.activeOutboundName = res.activeOutboundName;
+    notify.success(t("proxyGroup.activeGroupUpdated"));
+  } catch (err) {
+    store.activeOutboundName = previous;
+    notify.warning(errorText(err));
+  } finally {
+    saving.value = false;
+  }
+}
+
+function openSettings(outbound: string) {
+  openDialog(OutboundGroupDialog, { outbound }, { width: 440 });
+}
+
+async function removeGroup(outbound: string) {
+  await groups.remove(outbound);
+}
+
+const add = () => groups.add();
+</script>
+
 <template>
-  <div class="proxy-group-panel">
-    <div class="table-wrapper">
-      <table class="table is-fullwidth proxy-group-table">
-        <caption class="proxy-group-table__caption">
-          {{
-            $t("proxyGroup.activeGroupLabel")
-          }}
-        </caption>
+  <v-card>
+    <v-card-item class="px-6 pt-6 pb-2">
+      <div class="d-flex align-center">
+        <v-card-title class="md3-headline-small pa-0">
+          {{ t("common.proxyGroups") }}
+        </v-card-title>
+        <v-spacer />
+        <v-btn
+          variant="tonal"
+          color="primary"
+          size="small"
+          :prepend-icon="mdiPlus"
+          @click="add"
+        >
+          {{ t("operations.create") }}
+        </v-btn>
+      </div>
+      <p class="md3-body-small text-on-surface-variant mt-1 mb-0">
+        {{ t("proxyGroup.activeGroupLabel") }}
+      </p>
+    </v-card-item>
+
+    <v-card-text class="px-6">
+      <v-table hover density="comfortable">
         <thead>
           <tr>
-            <th class="proxy-group-radio-col" scope="col">
-              {{ $t("proxyGroup.active") }}
+            <th class="text-center" style="width: 56px">
+              {{ t("proxyGroup.active") }}
             </th>
-            <th scope="col">{{ $t("proxyGroup.group") }}</th>
-            <th class="proxy-group-members-col" scope="col">
-              {{ $t("proxyGroup.members") }}
+            <th>{{ t("proxyGroup.group") }}</th>
+            <th class="text-center" style="width: 100px">
+              {{ t("proxyGroup.members") }}
             </th>
-            <th class="proxy-group-status-col" scope="col">
-              {{ $t("proxyGroup.status") }}
+            <th class="text-center" style="width: 100px">
+              {{ t("proxyGroup.status") }}
+            </th>
+            <th class="text-end" style="width: 96px">
+              {{ t("common.setting") }}
             </th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="group in groups"
+            v-for="group in store.outbounds"
             :key="group"
-            :class="{ 'is-active-group': group === activeGroup }"
+            :class="{
+              'bg-primary-container-low': group === store.activeOutboundName,
+            }"
           >
-            <td class="proxy-group-radio-col">
-              <label class="proxy-group-radio-label">
-                <input
-                  v-model="selectedGroup"
-                  type="radio"
-                  name="active-proxy-group"
-                  :value="group"
-                  :disabled="saving"
-                  :aria-label="$t('proxyGroup.selectActiveGroup', { group })"
-                  @change="selectGroup(group)"
+            <td class="text-center">
+              <v-btn
+                variant="text"
+                icon
+                size="small"
+                :disabled="saving"
+                :color="group === store.activeOutboundName ? 'primary' : undefined"
+                :aria-label="t('proxyGroup.selectActiveGroup', { group })"
+                @click="selectActiveGroup(group)"
+              >
+                <v-icon
+                  :icon="
+                    group === store.activeOutboundName
+                      ? mdiRadioboxMarked
+                      : mdiRadioboxBlank
+                  "
                 />
-              </label>
+              </v-btn>
             </td>
-            <th scope="row" class="proxy-group-name-col">
+            <td class="font-weight-medium">
               {{ group.toUpperCase() }}
-            </th>
-            <td class="proxy-group-members-col">
-              {{ memberCount(group) }}
             </td>
-            <td class="proxy-group-status-col">
-              <b-tag v-if="group === activeGroup" type="is-primary" rounded>
-                {{ $t("proxyGroup.active") }}
-              </b-tag>
-              <span v-else class="has-text-grey">{{
-                $t("proxyGroup.inactive")
-              }}</span>
+            <td class="text-center">
+              {{ memberCounts[group] || 0 }}
+            </td>
+            <td class="text-center">
+              <v-chip
+                v-if="group === store.activeOutboundName"
+                size="small"
+                color="primary"
+                variant="flat"
+              >
+                {{ t("proxyGroup.active") }}
+              </v-chip>
+              <span v-else class="text-on-surface-variant md3-label-small">
+                {{ t("proxyGroup.inactive") }}
+              </span>
+            </td>
+            <td class="text-end">
+              <v-btn
+                :icon="mdiCogOutline"
+                variant="text"
+                size="small"
+                :aria-label="t('common.setting')"
+                @click="openSettings(group)"
+              />
+              <v-btn
+                v-if="group !== 'proxy'"
+                :icon="mdiDeleteOutline"
+                variant="text"
+                size="small"
+                color="error"
+                :aria-label="t('operations.delete')"
+                @click="removeGroup(group)"
+              />
             </td>
           </tr>
         </tbody>
-      </table>
-    </div>
-    <p
-      v-if="saving"
-      class="help is-info proxy-group-panel__saving"
-      aria-live="polite"
-    >
-      {{ $t("proxyGroup.activeGroupSaving") }}
-    </p>
-  </div>
+      </v-table>
+    </v-card-text>
+
+    <v-card-actions class="px-6 pb-4">
+      <v-spacer />
+      <v-btn variant="text" @click="emit('close')">
+        {{ t("operations.close") }}
+      </v-btn>
+    </v-card-actions>
+  </v-card>
 </template>
 
-<script>
-import { handleResponse } from "@/assets/js/utils";
-
-export default {
-  name: "ProxyGroupPanel",
-  props: {
-    groups: {
-      type: Array,
-      required: true,
-    },
-    activeGroup: {
-      type: String,
-      required: true,
-    },
-    memberCounts: {
-      type: Object,
-      default: () => ({}),
-    },
-  },
-  data() {
-    return {
-      selectedGroup: this.activeGroup,
-      saving: false,
-    };
-  },
-  watch: {
-    activeGroup(value) {
-      this.selectedGroup = value;
-    },
-    groups(groups) {
-      if (!groups.includes(this.selectedGroup)) {
-        this.selectedGroup = this.activeGroup;
-      }
-    },
-  },
-  methods: {
-    memberCount(group) {
-      return this.memberCounts[group] || 0;
-    },
-    selectGroup(group) {
-      if (this.saving || group === this.activeGroup) {
-        return;
-      }
-      this.saving = true;
-      this.$axios({
-        url: apiRoot + "/outbound/active",
-        method: "put",
-        data: { activeOutboundName: group },
-      })
-        .then((res) => {
-          handleResponse(
-            res,
-            this,
-            () => {
-              this.$emit("selected", res.data.data.activeOutboundName);
-              this.$buefy.toast.open({
-                message: this.$t("proxyGroup.activeGroupUpdated"),
-                type: "is-primary",
-                position: "is-top",
-                queue: false,
-              });
-            },
-            () => {
-              this.selectedGroup = this.activeGroup;
-            }
-          );
-        })
-        .catch(() => {
-          this.selectedGroup = this.activeGroup;
-        })
-        .finally(() => {
-          this.saving = false;
-        });
-    },
-  },
-};
-</script>
-
-<style scoped>
-.proxy-group-panel .table-wrapper {
-  overflow-x: auto;
-  border: 1px solid #edf0f4;
-  border-radius: 8px;
-}
-
-.proxy-group-table {
-  margin-bottom: 0;
-  background: transparent;
-}
-
-.proxy-group-table__caption {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.proxy-group-table th,
-.proxy-group-table td {
-  vertical-align: middle;
-}
-
-.proxy-group-radio-col {
-  width: 4rem;
-  text-align: center;
-}
-
-.proxy-group-radio-label {
-  display: inline-flex;
-  padding: 0.35rem;
-  cursor: pointer;
-}
-
-.proxy-group-radio-label input {
-  cursor: inherit;
-}
-
-.proxy-group-name-col {
-  font-weight: 600;
-}
-
-.proxy-group-members-col,
-.proxy-group-status-col {
-  width: 8rem;
-}
-
-.proxy-group-table tr.is-active-group > th,
-.proxy-group-table tr.is-active-group > td {
-  background: rgba(80, 109, 164, 0.08);
-}
-
-.proxy-group-panel__saving {
-  margin: 0.75rem 0 0;
-}
-
-@media screen and (max-width: 480px) {
-  .proxy-group-members-col,
-  .proxy-group-status-col {
-    width: auto;
-  }
-}
-</style>

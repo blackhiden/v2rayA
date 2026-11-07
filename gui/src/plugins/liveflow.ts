@@ -1,42 +1,46 @@
-import store from "../store";
+import { apiRoot } from "@/api/client";
+import {
+  useLiveFlowStore,
+  type FlowEndpoint,
+  type FlowProxy,
+  type LiveFlow,
+} from "@/stores/liveflow";
 
-function isObject(value) {
+function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeEndpoint(value) {
+function normalizeEndpoint(value: unknown): FlowEndpoint | null {
   if (!isObject(value) || typeof value.ip !== "string" || !value.ip) {
     return null;
   }
-
   return {
     ip: value.ip,
-    port: Number.isInteger(value.port) ? value.port : 0,
+    port: typeof value.port === "number" ? value.port : 0,
     domain: typeof value.domain === "string" ? value.domain : "",
   };
 }
 
-function normalizeProxyChain(value) {
+function normalizeProxyChain(value: unknown): FlowProxy[] {
   if (!Array.isArray(value)) {
     return [];
   }
-
   return value
     .filter(
-      (proxy) =>
+      (proxy): proxy is Record<string, unknown> =>
         isObject(proxy) &&
         typeof proxy.proxy_id === "string" &&
-        typeof proxy.name === "string"
+        typeof proxy.name === "string",
     )
     .map((proxy) => ({
-      proxy_id: proxy.proxy_id,
-      name: proxy.name,
+      proxy_id: proxy.proxy_id as string,
+      name: proxy.name as string,
       type: typeof proxy.type === "string" ? proxy.type : "unknown",
       server: typeof proxy.server === "string" ? proxy.server : "",
     }));
 }
 
-function normalizeFlowStart(data) {
+function normalizeFlowStart(data: unknown): LiveFlow | null {
   if (
     !isObject(data) ||
     typeof data.session_id !== "string" ||
@@ -57,54 +61,38 @@ function normalizeFlowStart(data) {
     proxy_chain: normalizeProxyChain(data.proxy_chain),
     destination,
     protocol: data.protocol || "tcp",
-    start_time: data.start_time || new Date().toISOString(),
+    start_time: (data.start_time as string) || new Date().toISOString(),
     bytes_sent: 0,
     bytes_recv: 0,
     speed_bps: 0,
-    last_activity: data.start_time || new Date().toISOString(),
+    last_activity: (data.start_time as string) || new Date().toISOString(),
     status: "active",
   };
 }
 
 class LiveFlowService {
-  constructor() {
-    this.ws = null;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 10;
-    this.reconnectDelay = 1000;
-    this.isConnected = false;
-    this.shouldReconnect = false;
-    this.reconnectTimer = null;
-    this.lastMessageTime = 0;
-    this.messageCount = 0;
-  }
+  private ws: WebSocket | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectDelay = 1000;
+  private shouldReconnect = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  buildUrl(token) {
-    let baseUrl = typeof apiRoot !== "undefined" ? apiRoot : "/api";
-
-    if (!baseUrl.trim() || baseUrl.startsWith("/")) {
-      baseUrl = `${window.location.protocol}//${window.location.host}${baseUrl}`;
-    }
-
+  buildUrl(token: string): string {
+    const root = apiRoot();
     try {
-      const url = new URL(baseUrl);
+      const url = new URL(root, window.location.href);
       const protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const basePath = url.pathname.replace(/\/api\/?$/, "");
-      return `${protocol}//${
-        url.host
-      }${basePath}/api/live-flow?token=${encodeURIComponent(token)}`;
-    } catch (error) {
+      return `${protocol}//${url.host}${basePath}/api/live-flow?token=${encodeURIComponent(token)}`;
+    } catch {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      return `${protocol}//${
-        window.location.host
-      }/api/live-flow?token=${encodeURIComponent(token)}`;
+      return `${protocol}//${window.location.host}/api/live-flow?token=${encodeURIComponent(token)}`;
     }
   }
 
-  connect(token) {
-    if (!token) {
-      return;
-    }
+  connect(token: string) {
+    if (!token) return;
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN ||
@@ -114,33 +102,39 @@ class LiveFlowService {
     }
 
     this.shouldReconnect = true;
-    this.ws = new WebSocket(this.buildUrl(token));
+    const store = useLiveFlowStore();
 
-    this.ws.onopen = () => {
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      store.commit("SET_LIVE_FLOW_CONNECTED", true);
-    };
+    try {
+      this.ws = new WebSocket(this.buildUrl(token));
 
-    this.ws.onmessage = (event) => {
-      try {
-        this.lastMessageTime = Date.now();
-        this.messageCount += 1;
-        this.handleMessage(JSON.parse(event.data));
-      } catch (error) {
-        console.warn("[LiveFlow] Ignored malformed WebSocket message", error);
-      }
-    };
+      this.ws.onopen = () => {
+        this.reconnectAttempts = 0;
+        store.setConnected(true);
+      };
 
-    this.ws.onclose = () => {
-      this.ws = null;
-      this.isConnected = false;
-      store.commit("SET_LIVE_FLOW_CONNECTED", false);
-      this.scheduleReconnect(token);
-    };
+      this.ws.onmessage = (event) => {
+        try {
+          this.handleMessage(JSON.parse(event.data));
+        } catch (error) {
+          console.warn("[LiveFlow] Ignored malformed WebSocket message", error);
+        }
+      };
+
+      this.ws.onclose = () => {
+        this.ws = null;
+        store.setConnected(false);
+        this.scheduleReconnect(token);
+      };
+
+      this.ws.onerror = () => {
+        store.setConnected(false);
+      };
+    } catch (err) {
+      console.warn("[LiveFlow] Connection failed", err);
+    }
   }
 
-  scheduleReconnect(token) {
+  scheduleReconnect(token: string) {
     if (
       !this.shouldReconnect ||
       this.reconnectAttempts >= this.maxReconnectAttempts
@@ -150,23 +144,25 @@ class LiveFlowService {
 
     const delay = Math.min(
       this.reconnectDelay * Math.pow(2, this.reconnectAttempts),
-      30000
+      30000,
     );
     this.reconnectAttempts += 1;
-    clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => this.connect(token), delay);
   }
 
-  handleMessage(message) {
+  handleMessage(message: unknown) {
     if (!isObject(message) || typeof message.type !== "string") {
       return;
     }
+
+    const store = useLiveFlowStore();
 
     switch (message.type) {
       case "flow_start": {
         const flow = normalizeFlowStart(message.data);
         if (flow) {
-          store.commit("ADD_LIVE_FLOW", flow);
+          store.addFlow(flow);
         }
         break;
       }
@@ -175,7 +171,9 @@ class LiveFlowService {
           isObject(message.data) &&
           typeof message.data.session_id === "string"
         ) {
-          store.commit("UPDATE_LIVE_FLOW", message.data);
+          store.updateFlow(
+            message.data as Partial<LiveFlow> & { session_id: string },
+          );
         }
         break;
       case "flow_end":
@@ -183,15 +181,15 @@ class LiveFlowService {
           isObject(message.data) &&
           typeof message.data.session_id === "string"
         ) {
-          store.commit("REMOVE_LIVE_FLOW", message.data.session_id);
+          store.removeFlow(message.data.session_id as string);
         }
         break;
       case "batch_state": {
         const sessions =
           isObject(message.data) && Array.isArray(message.data.sessions)
-            ? message.data.sessions.map(normalizeFlowStart).filter(Boolean)
+            ? (message.data.sessions.map(normalizeFlowStart).filter(Boolean) as LiveFlow[])
             : [];
-        store.commit("SET_LIVE_FLOWS", sessions);
+        store.setFlows(sessions);
         break;
       }
       case "error":
@@ -199,34 +197,24 @@ class LiveFlowService {
           isObject(message.data) &&
           typeof message.data.message === "string"
         ) {
-          store.commit("SET_LIVE_FLOW_WARNINGS", [message.data]);
+          store.setWarnings([{ message: message.data.message as string }]);
         }
-        break;
-      default:
-        // Observatory messages intentionally do not represent traffic sessions.
         break;
     }
   }
 
   disconnect() {
     this.shouldReconnect = false;
-    clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    this.isConnected = false;
-    store.commit("SET_LIVE_FLOW_CONNECTED", false);
-  }
-
-  getDebugInfo() {
-    return {
-      isConnected: this.isConnected,
-      reconnectAttempts: this.reconnectAttempts,
-      lastMessageTime: this.lastMessageTime,
-      messageCount: this.messageCount,
-    };
+    const store = useLiveFlowStore();
+    store.setConnected(false);
   }
 }
 

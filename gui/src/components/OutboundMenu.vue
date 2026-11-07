@@ -9,11 +9,13 @@ import {
   mdiChevronDown,
   mdiCogOutline,
   mdiDeleteOutline,
+  mdiFormatListBulleted,
   mdiPlus,
   mdiSitemapOutline,
 } from "@mdi/js";
 import { useDialog, useOutboundGroups } from "@/composables";
 import OutboundGroupDialog from "@/dialogs/OutboundGroup.vue";
+import ProxyGroupPanel from "@/components/ProxyGroupPanel.vue";
 import { useAppStore } from "@/stores/app";
 
 defineProps<{
@@ -29,6 +31,11 @@ const open = ref(false);
 function settings(outbound: string) {
   open.value = false;
   openDialog(OutboundGroupDialog, { outbound }, { width: 440 });
+}
+
+function openPanel() {
+  open.value = false;
+  openDialog(ProxyGroupPanel, {}, { width: 640 });
 }
 
 const groups = useOutboundGroups();
@@ -82,6 +89,11 @@ async function remove(outbound: string) {
         :key="outbound"
         :active="outbound === store.outboundName"
         :title="outbound.toUpperCase()"
+        :subtitle="
+          outbound === store.activeOutboundName
+            ? t('proxyGroup.active')
+            : undefined
+        "
         @click="
           store.outboundName = outbound;
           open = false;
@@ -112,6 +124,11 @@ async function remove(outbound: string) {
         </template>
       </v-list-item>
       <v-divider class="my-1" />
+      <v-list-item
+        :prepend-icon="mdiFormatListBulleted"
+        :title="t('proxyGroup.manageGroups')"
+        @click="openPanel"
+      />
       <v-list-item
         :prepend-icon="mdiPlus"
         :title="t('operations.create')"

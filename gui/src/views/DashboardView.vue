@@ -231,6 +231,15 @@ defineExpose({ sync });
           />
           <h2 class="md3-title-small">{{ t("dashboard.proxyGroup") }}</h2>
           <OutboundMenu variant="chip" @changed="sync" />
+          <v-chip
+            v-if="store.outboundName === store.activeOutboundName"
+            size="x-small"
+            color="primary"
+            variant="flat"
+            class="ms-1"
+          >
+            {{ t("proxyGroup.active") }}
+          </v-chip>
         </div>
         <v-skeleton-loader
           v-if="loading"

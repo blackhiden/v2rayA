@@ -14,7 +14,8 @@ import (
 func GetOutbounds(ctx *gin.Context) {
 	outbounds := configure.GetOutbounds()
 	common.ResponseSuccess(ctx, gin.H{
-		"outbounds": outbounds,
+		"outbounds":          outbounds,
+		"activeOutboundName": configure.GetActiveOutboundName(),
 	})
 }
 
@@ -263,3 +264,158 @@ func PutOutboundSelection(ctx *gin.Context) {
 	}
 	getTouch(ctx)
 }
+
+func SetActiveOutbound(ctx *gin.Context) {
+	release, ok := beginMutation(ctx)
+	if !ok {
+		return
+	}
+	defer release()
+
+	var data struct {
+		ActiveOutboundName string `json:"activeOutboundName"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, badRequest("active outbound", "request body must be a JSON object with a non-empty \"activeOutboundName\" string"))
+		return
+	}
+	data.ActiveOutboundName = strings.TrimSpace(data.ActiveOutboundName)
+	if data.ActiveOutboundName == "" {
+		common.ResponseError(ctx, badRequest("active outbound", "\"activeOutboundName\" cannot be empty"))
+		return
+	}
+	if !configure.IsOutbound(data.ActiveOutboundName) {
+		common.ResponseError(ctx, logError(fmt.Errorf("outbound group %q does not exist", data.ActiveOutboundName)))
+		return
+	}
+
+	previous := configure.GetActiveOutboundName()
+	err := service.ApplyCoreConfig(func() func() error {
+		return func() error { return configure.SetActiveOutboundName(previous) }
+	}, func() error {
+		return configure.SetActiveOutboundName(data.ActiveOutboundName)
+	})
+	if err != nil {
+		var failure *service.ApplyCoreConfigError
+		if !errors.As(err, &failure) {
+			common.ResponseError(ctx, logError(err))
+			return
+		}
+		common.ResponseError(ctx, common.Coded("INVALID_CONFIG", fmt.Errorf("invalid config: %w", failure.UpdateErr), map[string]interface{}{"detail": failure.UpdateErr.Error()}))
+		return
+	}
+
+	common.ResponseSuccess(ctx, gin.H{"activeOutboundName": data.ActiveOutboundName})
+}
+
+// PostBulkRemoveByLatency removes servers from an outbound group based on latency threshold.
+// Servers with latency >= threshold OR servers without latency data (errors/timeouts) are removed.
+// At least one server must remain in the group after removal.
+func PostBulkRemoveByLatency(ctx *gin.Context) {
+	release, ok := beginMutation(ctx)
+	if !ok {
+		return
+	}
+	defer release()
+
+	var data struct {
+		Outbound       string `json:"outbound"`
+		MaxLatencyMs   int    `json:"maxLatencyMs"`
+		ServersToCheck []struct {
+			ID        int    `json:"id"`
+			TYPE      string `json:"_type"`
+			TYPEAlias string `json:"type"`
+			Sub       *int   `json:"sub"`
+		} `json:"serversToCheck"`
+	}
+	if err := ctx.ShouldBindJSON(&data); err != nil {
+		common.ResponseError(ctx, badRequest("bulk remove by latency", "request body must be valid JSON"))
+		return
+	}
+	if data.Outbound == "" {
+		common.ResponseError(ctx, badRequest("outbound", "outbound is required"))
+		return
+	}
+	if data.MaxLatencyMs <= 0 {
+		common.ResponseError(ctx, badRequest("maxLatencyMs", "maxLatencyMs must be positive"))
+		return
+	}
+	if len(data.ServersToCheck) == 0 {
+		common.ResponseError(ctx, badRequest("serversToCheck", "no servers to check"))
+		return
+	}
+
+	connected := configure.GetConnectedServersByOutbound(data.Outbound)
+	if connected == nil || connected.Len() == 0 {
+		common.ResponseError(ctx, logError("no connected servers in this outbound"))
+		return
+	}
+
+	normalizeTouchType := func(raw string) (configure.TouchType, bool) {
+		normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(raw, "_", ""), "-", ""))
+		switch normalized {
+		case "server":
+			return configure.ServerType, true
+		case "subscriptionserver":
+			return configure.SubscriptionServerType, true
+		default:
+			return "", false
+		}
+	}
+
+	removeSet := make(map[configure.NodeRef]bool)
+	for _, s := range data.ServersToCheck {
+		rawType := s.TYPE
+		if rawType == "" {
+			rawType = s.TYPEAlias
+		}
+		typ, ok := normalizeTouchType(rawType)
+		if !ok {
+			continue
+		}
+		sub := 0
+		if s.Sub != nil {
+			sub = *s.Sub
+		}
+		if typ == configure.ServerType {
+			sub = 0
+		}
+		which := configure.NodeRef{
+			TYPE:     typ,
+			ID:       s.ID,
+			Sub:      sub,
+			Outbound: data.Outbound,
+		}
+		removeSet[which] = true
+	}
+
+	var remaining []configure.NodeRef
+	for _, w := range connected.Get() {
+		target := configure.NodeRef{
+			TYPE:     w.TYPE,
+			ID:       w.ID,
+			Sub:      w.Sub,
+			Outbound: data.Outbound,
+		}
+		if !removeSet[target] {
+			remaining = append(remaining, target)
+		}
+	}
+
+	if len(remaining) == 0 {
+		common.ResponseError(ctx, logError("cannot remove all servers from the group; at least one server must remain"))
+		return
+	}
+
+	if err := service.ReplaceOutboundConnections(data.Outbound, remaining); err != nil {
+		common.ResponseError(ctx, logError(err))
+		return
+	}
+
+	common.ResponseSuccess(ctx, gin.H{
+		"removedCount":   len(removeSet),
+		"remainingCount": len(remaining),
+		"outbound":       data.Outbound,
+	})
+}
+
