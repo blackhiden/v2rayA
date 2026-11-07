@@ -6,14 +6,19 @@ import (
 	"sync"
 )
 
+type requestLock struct {
+	sync.Mutex
+	users int
+}
+
 type reqGlen struct {
-	reqIdMu map[string]*sync.Mutex
+	reqIdMu map[string]*requestLock
 	reqMu   sync.Mutex
 }
 
 func newReqGlen() *reqGlen {
 	return &reqGlen{
-		reqIdMu: make(map[string]*sync.Mutex),
+		reqIdMu: make(map[string]*requestLock),
 		reqMu:   sync.Mutex{},
 	}
 }
@@ -28,21 +33,29 @@ func ReqCache(ctx *gin.Context) {
 		return
 	}
 	glen.reqMu.Lock()
-	if resp := common.RespCache.Get(reqId); resp != nil {
+	if resp, ok := common.RespCache.Get(reqId); ok {
 		glen.reqMu.Unlock()
-		resp := resp.(common.Resp)
 		ctx.AbortWithStatusJSON(resp.Status, resp.Body)
 		return
 	}
-	_, ok := glen.reqIdMu[reqId]
+	mu, ok := glen.reqIdMu[reqId]
 	if !ok {
-		glen.reqIdMu[reqId] = new(sync.Mutex)
+		mu = new(requestLock)
+		glen.reqIdMu[reqId] = mu
 	}
+	mu.users++
 	glen.reqMu.Unlock()
-	glen.reqIdMu[reqId].Lock()
-	defer glen.reqIdMu[reqId].Unlock()
-	if resp := common.RespCache.Get(reqId); resp != nil {
-		resp := resp.(common.Resp)
+	mu.Lock()
+	defer func() {
+		mu.Unlock()
+		glen.reqMu.Lock()
+		mu.users--
+		if mu.users == 0 {
+			delete(glen.reqIdMu, reqId)
+		}
+		glen.reqMu.Unlock()
+	}()
+	if resp, ok := common.RespCache.Get(reqId); ok {
 		ctx.AbortWithStatusJSON(resp.Status, resp.Body)
 		return
 	}

@@ -5,7 +5,10 @@
 package dns
 
 import (
+	"encoding/json"
+	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +30,25 @@ const (
 	TypePTR   QueryType = QueryType(dns.TypePTR)
 	TypeSOA   QueryType = QueryType(dns.TypeSOA)
 )
+
+func (q *QueryType) UnmarshalJSON(data []byte) error {
+	var name string
+	if err := json.Unmarshal(data, &name); err == nil {
+		qtype, ok := dns.StringToType[strings.ToUpper(name)]
+		if !ok {
+			return fmt.Errorf("dns: unknown query type %q", name)
+		}
+		*q = QueryType(qtype)
+		return nil
+	}
+
+	var qtype uint16
+	if err := json.Unmarshal(data, &qtype); err != nil {
+		return fmt.Errorf("dns: invalid query type: %w", err)
+	}
+	*q = QueryType(qtype)
+	return nil
+}
 
 // DnsQuery represents a normalized DNS query request.
 type DnsQuery struct {
@@ -82,10 +104,11 @@ type DnsListenerConfig struct {
 
 // DnsModuleConfig holds the complete DNS module configuration.
 type DnsModuleConfig struct {
-	Listener  DnsListenerConfig `json:"listener"`
-	Cache     CacheConfig       `json:"cache"`
-	Upstreams []UpstreamConfig  `json:"upstreams"`
-	Rules     []RuleConfig      `json:"rules"`
+	Listener        DnsListenerConfig `json:"listener"`
+	Cache           CacheConfig       `json:"cache"`
+	Upstreams       []UpstreamConfig  `json:"upstreams"`
+	Rules           []RuleConfig      `json:"rules"`
+	DefaultUpstream string            `json:"default_upstream,omitempty"`
 	// ProxyMap maps proxy tags (e.g. "proxy") to SOCKS5 proxy addresses (e.g. "127.0.0.1:20170").
 	// The DNS module connects to these SOCKS5 proxies when sending queries through tagged upstreams.
 	// If a tag is not found in this map, the module falls back to common defaults ("proxy" → "127.0.0.1:1080").
@@ -97,6 +120,11 @@ type DnsModuleConfig struct {
 	// Used by resolveBootstrap to avoid chicken-and-egg: the hijacked resolv.conf
 	// points to 127.2.0.17:53 (our own DNS module), but it hasn't started yet.
 	BootstrapDns []string `json:"bootstrap_dns,omitempty"`
+	// EgressInterface is the physical interface the module's own upstream
+	// sockets bind to on Windows and macOS, where there is no SO_MARK to keep
+	// them out of a TUN that holds the default route. Empty leaves them
+	// unbound; Linux ignores it.
+	EgressInterface string `json:"egress_interface,omitempty"`
 }
 
 // CacheConfig holds DNS cache configuration.
@@ -117,6 +145,9 @@ type UpstreamConfig struct {
 	Protocol  string `json:"protocol,omitempty"`
 	ProxyTag  string `json:"proxy_tag,omitempty"`
 	Bootstrap bool   `json:"bootstrap,omitempty"`
+	// ServerName is the hostname of a tls or https upstream, kept when
+	// bootstrap replaces the address with an IP: TLS verifies against it.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 // RuleConfig holds DNS routing rule configuration.

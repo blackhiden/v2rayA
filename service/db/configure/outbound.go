@@ -21,6 +21,11 @@ type OutboundSetting struct {
 	ProbeURL            string          `json:"probeURL"`
 	ProbeInterval       string          `json:"probeInterval"`
 	Type                ObservatoryType `json:"type"`
+	// Selected is the share link of the member the group routes through
+	// alone; empty means every member, balanced by the observatory. A link
+	// that matches no member is ignored, so a removed or renamed node
+	// falls back to balancing instead of breaking the group.
+	Selected            string          `json:"selected,omitempty"`
 	LoadBalanceEnabled  bool            `json:"loadBalanceEnabled"`
 	LoadBalanceStrategy string          `json:"loadBalanceStrategy"`
 }

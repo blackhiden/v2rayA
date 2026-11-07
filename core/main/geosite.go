@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/arsydoni4326-alt/xray-core/common/geodata"
+	"github.com/xtls/xray-core/common/geodata"
 	"google.golang.org/protobuf/proto"
 )
 

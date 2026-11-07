@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/v2rayA/v2raya-core/dns"
-	"github.com/arsydoni4326-alt/xray-core/common/cmdarg"
-	xcore "github.com/arsydoni4326-alt/xray-core/core"
+	"github.com/xtls/xray-core/common/cmdarg"
+	xcore "github.com/xtls/xray-core/core"
 )
 
 // dnsModuleManager manages the lifecycle of the DNS module within v2raya-core.

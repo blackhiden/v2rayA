@@ -31,15 +31,6 @@ func (t *Template) outNames() map[string]bool {
 	return tags
 }
 
-func (t *Template) balancerTagForOutbound(outboundName string) (string, bool) {
-	for _, group := range t.balancerGroups {
-		if outboundName == group.OutboundName || outboundName == group.Tag {
-			return group.Tag, true
-		}
-	}
-	return "", false
-}
-
 func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGroup bool) bool) (outboundName string, isGroup bool) {
 	if filter == nil {
 		filter = func(outboundName string, isGroup bool) bool {
@@ -67,10 +58,10 @@ func (t *Template) FirstProxyOutboundName(filter func(outboundName string, isGro
 				}
 				m[groupTag] = struct{}{}
 			}
-			continue
-		}
-		if filter(o.Tag, false) {
-			return o.Tag, false
+		} else {
+			if filter(o.Tag, false) {
+				return o.Tag, false
+			}
 		}
 	}
 	return
@@ -110,14 +101,21 @@ func (t *Template) defaultProxyOutboundName(outbound, activeOutbound string) str
 	return outbound
 }
 
+// balancerTagForOutbound returns the balancer tag for an outbound group name.
+func (t *Template) balancerTagForOutbound(outboundName string) (string, bool) {
+	for _, group := range t.balancerGroups {
+		if outboundName == group.OutboundName || outboundName == group.Tag {
+			return group.Tag, true
+		}
+	}
+	return "", false
+}
+
 // dnsRuleToLines converts a configure.DnsRule to the "server -> outbound" line format
 // and the domain list used for the DNS server object.
 // Returns (serverLine, []domains). serverLine is empty if server is empty.
 func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds []string) (err error) {
-	proxyOutboundTag := t.ActiveProxyOutboundName()
-	if proxyOutboundTag == "" {
-		proxyOutboundTag = "proxy"
-	}
+	firstOutboundTag, _ := t.FirstProxyOutboundName(nil)
 	// apple pushing. #495 #479
 	t.Routing.Rules = append(t.Routing.Rules, coreObj.RoutingRule{
 		Type:        "field",
@@ -132,7 +130,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: proxyOutboundTag,
+					OutboundTag: firstOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:geolocation-!cn"},
 				})
@@ -140,7 +138,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: proxyOutboundTag,
+					OutboundTag: firstOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -148,7 +146,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: proxyOutboundTag,
+				OutboundTag: "proxy",
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// https://github.com/v2rayA/v2rayA/issues/285
 				Domain: []string{"geosite:google"},
@@ -161,7 +159,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			},
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: proxyOutboundTag,
+				OutboundTag: "proxy",
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				IP:          []string{"geoip:hk", "geoip:mo"},
 			},
@@ -177,13 +175,13 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: proxyOutboundTag,
+					OutboundTag: firstOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:gfw"},
 				},
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: proxyOutboundTag,
+					OutboundTag: firstOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"ext:LoyalsoldierSite.dat:greatfire"},
 				})
@@ -191,7 +189,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 			t.Routing.Rules = append(t.Routing.Rules,
 				coreObj.RoutingRule{
 					Type:        "field",
-					OutboundTag: proxyOutboundTag,
+					OutboundTag: firstOutboundTag,
 					InboundTag:  deepcopy.Copy(inbounds).([]string),
 					Domain:      []string{"geosite:geolocation-!cn"},
 				})
@@ -200,7 +198,7 @@ func (t *Template) AppendRoutingRuleByMode(mode configure.RulePortMode, inbounds
 		t.Routing.Rules = append(t.Routing.Rules,
 			coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: proxyOutboundTag,
+				OutboundTag: firstOutboundTag,
 				InboundTag:  deepcopy.Copy(inbounds).([]string),
 				// From: https://github.com/Loyalsoldier/geoip/blob/release/text/telegram.txt
 				IP: []string{"91.105.192.0/23", "91.108.4.0/22", "91.108.8.0/21", "91.108.16.0/21", "91.108.56.0/22",
@@ -247,7 +245,7 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 		log.Warn("parseRoutingA: %v", err)
 		return err
 	}
-	defaultOutbound := t.ActiveProxyOutboundName()
+	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
 	for _, rule := range rules {
 		switch rule := rule.(type) {
 		case RoutingA.Define:
@@ -338,9 +336,8 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 			case "default":
 				switch v := rule.Value.(type) {
 				case string:
-					target := t.DefaultProxyOutboundName(v)
-					defaultOutbound = target
-					if _, ok := outboundTags[target]; !ok {
+					defaultOutbound = v
+					if _, ok := outboundTags[v]; !ok {
 						return fmt.Errorf(`your RoutingA rules depend on the outbound "%v", thus you should select at least one server in this outbound`, v)
 					}
 				}
@@ -348,7 +345,7 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 		case RoutingA.Routing:
 			rr := deepcopy.Copy(coreObj.RoutingRule{
 				Type:        "field",
-				OutboundTag: t.DefaultProxyOutboundName(rule.Out),
+				OutboundTag: rule.Out,
 				InboundTag:  routingInboundTags,
 			}).(coreObj.RoutingRule)
 			for _, f := range rule.And {
@@ -363,10 +360,10 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 							if k == "ext" {
 								datFilenameAndTag := strings.SplitN(v, ":", 2)
 								if len(datFilenameAndTag) < 2 {
-									return fmt.Errorf("%v: tag is not given", v)
+									return fmt.Errorf("RoutingA ext value %q is missing its tag; expected ext:\"file.dat:tag\"", v)
 								}
 								if !asset.DoesV2rayAssetExist(datFilenameAndTag[0]) {
-									return fmt.Errorf("%v: file is not found", datFilenameAndTag[0])
+									return fmt.Errorf("RoutingA ext file %q is not in the asset directory", datFilenameAndTag[0])
 								}
 							}
 							rr.Domain = append(rr.Domain, fmt.Sprintf("%v:%v", k, v))
@@ -380,10 +377,10 @@ func parseRoutingA(t *Template, routingInboundTags []string) error {
 							if k == "ext" {
 								datFilenameAndTag := strings.SplitN(v, ":", 2)
 								if len(datFilenameAndTag) < 2 {
-									return fmt.Errorf("%v: tag is not given", v)
+									return fmt.Errorf("RoutingA ext value %q is missing its tag; expected ext:\"file.dat:tag\"", v)
 								}
 								if !asset.DoesV2rayAssetExist(datFilenameAndTag[0]) {
-									return fmt.Errorf("%v: file is not found", datFilenameAndTag[0])
+									return fmt.Errorf("RoutingA ext file %q is not in the asset directory", datFilenameAndTag[0])
 								}
 							}
 							rr.IP = append(rr.IP, fmt.Sprintf("%v:%v", k, v))
@@ -465,10 +462,10 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 							if k == "ext" {
 								datFilenameAndTag := strings.SplitN(v, ":", 2)
 								if len(datFilenameAndTag) < 2 {
-									return nil, fmt.Errorf("%v: tag is not given", v)
+									return nil, fmt.Errorf("RoutingA ext value %q is missing its tag; expected ext:\"file.dat:tag\"", v)
 								}
 								if !asset.DoesV2rayAssetExist(datFilenameAndTag[0]) {
-									return nil, fmt.Errorf("%v: file is not found", datFilenameAndTag[0])
+									return nil, fmt.Errorf("RoutingA ext file %q is not in the asset directory", datFilenameAndTag[0])
 								}
 							}
 							rr.Domain = append(rr.Domain, fmt.Sprintf("%v:%v", k, v))
@@ -481,10 +478,10 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 							if k == "ext" {
 								datFilenameAndTag := strings.SplitN(v, ":", 2)
 								if len(datFilenameAndTag) < 2 {
-									return nil, fmt.Errorf("%v: tag is not given", v)
+									return nil, fmt.Errorf("RoutingA ext value %q is missing its tag; expected ext:\"file.dat:tag\"", v)
 								}
 								if !asset.DoesV2rayAssetExist(datFilenameAndTag[0]) {
-									return nil, fmt.Errorf("%v: file is not found", datFilenameAndTag[0])
+									return nil, fmt.Errorf("RoutingA ext file %q is not in the asset directory", datFilenameAndTag[0])
 								}
 							}
 							rr.IP = append(rr.IP, fmt.Sprintf("%v:%v", k, v))
@@ -516,7 +513,20 @@ func parseRoutingARules(rulesText string, inboundTag string) (rules []coreObj.Ro
 }
 
 func (t *Template) setTransparentRouting() (err error) {
-	defaultOutbound := t.ActiveProxyOutboundName()
+	// With DNS interception off in tun mode the core no longer relays port
+	// 53, so a query that still reaches the device must leave the host
+	// directly instead of joining the transparent proxy chain, which would
+	// send it to a proxy's port 53. The rule goes first so it wins over the
+	// mode's own rules.
+	if t.Setting.TransparentType == configure.TransparentTun && !dnsInterceptionEnabled(t.Setting) {
+		t.Routing.Rules = append([]coreObj.RoutingRule{{
+			Type:        "field",
+			InboundTag:  []string{"transparent"},
+			OutboundTag: "direct",
+			Port:        "53",
+		}}, t.Routing.Rules...)
+	}
+	defaultOutbound, _ := t.FirstProxyOutboundName(nil)
 	switch t.Setting.Transparent {
 	case configure.TransparentProxy:
 		// Global transparent: route all transparent inbound to default outbound
@@ -547,8 +557,18 @@ func (t *Template) setTransparentRouting() (err error) {
 	return nil
 }
 func (t *Template) AppendDokodemoTProxy(tproxy string, port int, tag string) {
+	// Follow the "Allow connections from LAN" (PortSharing) toggle, the same way
+	// the socks/http inbounds and dns-in already do. Redirected/forwarded traffic
+	// (e.g. docker bridge containers, which the PREROUTING transparent rules
+	// REDIRECT to the bridge interface address) can only reach the inbound when
+	// it listens on 0.0.0.0; since v2.4 the loopback-only default broke those
+	// flows entirely.
+	listenAddr := "127.0.0.1"
+	if t.Setting != nil && t.Setting.PortSharing {
+		listenAddr = "0.0.0.0"
+	}
 	dokodemo := coreObj.Inbound{
-		Listen:   "127.0.0.1",
+		Listen:   listenAddr,
 		Port:     port,
 		Protocol: "dokodemo-door",
 		Sniffing: coreObj.Sniffing{

@@ -4,6 +4,9 @@ import (
 	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/kernel/ipforward"
 	"github.com/v2rayA/v2rayA/pkg/util/log"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type Setting struct {
@@ -19,18 +22,18 @@ type Setting struct {
 	Mux                                int             `json:"mux"`
 	InboundSniffing                    InboundSniffing `json:"inboundSniffing"`
 	Transparent                        TransparentMode `json:"transparent"`
+	DnsHijack                          DefaultYesNo    `json:"dnsHijack"`
+	DnsMode                            DnsMode         `json:"dnsMode"`
 	IpForward                          bool            `json:"ipforward"`
 	RouteOnly                          bool            `json:"routeOnly"`
 	PortSharing                        bool            `json:"portSharing"`
 	TransparentType                    TransparentType `json:"transparentType"`
 	TproxyExcludedInterfaces           string          `json:"tproxyExcludedInterfaces"`
-	TunBypassInterfaces                string          `json:"tunBypassInterfaces"`
 	TunAutoRoute                       bool            `json:"tunAutoRoute"`
 	TunRouteShellType                  string          `json:"tunRouteShellType"`
 	TunRouteShellPath                  string          `json:"tunRouteShellPath"`
 	TunSetupScript                     string          `json:"tunSetupScript"`
 	TunTeardownScript                  string          `json:"tunTeardownScript"`
-	TunProcessBackend                  string          `json:"tunProcessBackend"`
 	TunExcludeProcesses                string          `json:"tunExcludeProcesses"`
 	SsBackend                          string          `json:"ssBackend"`
 	TrojanBackend                      string          `json:"trojanBackend"`
@@ -60,6 +63,7 @@ func NewSetting() (setting *Setting) {
 		Mux:                                8,
 		InboundSniffing:                    "http,tls,quic",
 		Transparent:                        TransparentClose,
+		DnsHijack:                          Yes,
 		IpForward:                          ipforward.IsIpForwardOn(),
 		PortSharing:                        false,
 		TransparentType:                    TransparentRedirect,
@@ -93,4 +97,27 @@ type RoutingRule struct {
 	Tags      []string     `json:"tags"`      //SiteDAT文件的标签
 	MatchType PacMatchType `json:"matchType"` //是domain匹配还是ip匹配
 	RuleType  PacRuleType  `json:"ruleType"`  //在名单上的项进行直连、代理还是拦截
+}
+
+// IntervalHours converts a stored auto-update interval to a ticker period.
+// time.Ticker.Reset panics on a non-positive duration, and a 0 or negative
+// hour count can be stored by an old GUI or a hand-edited database; such a
+// value falls back to one hour instead of crashing every start.
+func IntervalHours(hours int) time.Duration {
+	if hours <= 0 {
+		hours = 1
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+// DnsModulePort is the port of DnsListenAddr, 52353 when unset or unparsable.
+// The DNS REDIRECT and TPROXY rules and the module's listeners all take it
+// from here.
+func (s *Setting) DnsModulePort() string {
+	if i := strings.LastIndexByte(s.DnsListenAddr, ':'); i >= 0 && i+1 < len(s.DnsListenAddr) {
+		if _, err := strconv.Atoi(s.DnsListenAddr[i+1:]); err == nil {
+			return s.DnsListenAddr[i+1:]
+		}
+	}
+	return "52353"
 }

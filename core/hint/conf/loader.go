@@ -20,17 +20,18 @@ import (
 	hint_anytls "github.com/v2rayA/v2raya-core/hint/proxy/anytls"
 	hint_juicity "github.com/v2rayA/v2raya-core/hint/proxy/juicity"
 	hint_tuic "github.com/v2rayA/v2raya-core/hint/proxy/tuic"
-	xray_commander "github.com/arsydoni4326-alt/xray-core/app/commander"
-	xray_proxyman "github.com/arsydoni4326-alt/xray-core/app/proxyman"
-	"github.com/arsydoni4326-alt/xray-core/common"
-	"github.com/arsydoni4326-alt/xray-core/common/cmdarg"
-	"github.com/arsydoni4326-alt/xray-core/common/errors"
-	"github.com/arsydoni4326-alt/xray-core/common/serial"
-	xray_core "github.com/arsydoni4326-alt/xray-core/core"
-	xray_conf "github.com/arsydoni4326-alt/xray-core/infra/conf"
-	xray_cfgdur "github.com/arsydoni4326-alt/xray-core/infra/conf/cfgcommon/duration"
-	conf_serial "github.com/arsydoni4326-alt/xray-core/infra/conf/serial"
-	"github.com/arsydoni4326-alt/xray-core/main/confloader"
+	hint_tunmips "github.com/v2rayA/v2raya-core/hint/proxy/tunmips"
+	xray_commander "github.com/xtls/xray-core/app/commander"
+	xray_proxyman "github.com/xtls/xray-core/app/proxyman"
+	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/cmdarg"
+	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/serial"
+	xray_core "github.com/xtls/xray-core/core"
+	xray_conf "github.com/xtls/xray-core/infra/conf"
+	xray_cfgdur "github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
+	conf_serial "github.com/xtls/xray-core/infra/conf/serial"
+	"github.com/xtls/xray-core/main/confloader"
 )
 
 // multiObsEntryJSON represents one observer group in the JSON config.
@@ -80,9 +81,18 @@ type extendedJSON struct {
 
 // customOutboundJSON is the raw JSON form of an anytls or juicity outbound.
 type customOutboundJSON struct {
-	Protocol string          `json:"protocol"`
-	Tag      string          `json:"tag"`
-	Settings json.RawMessage `json:"settings"`
+	Protocol       string          `json:"protocol"`
+	Tag            string          `json:"tag"`
+	Settings       json.RawMessage `json:"settings"`
+	StreamSettings json.RawMessage `json:"streamSettings"`
+}
+
+// customInboundJSON is the raw JSON form of a tun-mips inbound.
+type customInboundJSON struct {
+	Protocol string                    `json:"protocol"`
+	Tag      string                    `json:"tag"`
+	Settings json.RawMessage           `json:"settings"`
+	Sniffing *xray_conf.SniffingConfig `json:"sniffing"`
 }
 
 // customProtocols is the set of outbound protocols handled by hint/proxy.
@@ -92,53 +102,122 @@ var customProtocols = map[string]bool{
 	"tuic":    true,
 }
 
-// stripCustomOutbounds parses raw JSON, removes custom-protocol outbound entries,
-// and returns the modified JSON along with the stripped outbound descriptors.
-// If the JSON is not valid or has no outbounds, raw is returned unchanged with
-// nil custom list (safe to pass to xray unmodified).
-func stripCustomOutbounds(raw []byte) ([]byte, []customOutboundJSON, error) {
+// customInboundProtocols is the set of inbound protocols handled by
+// hint/proxy. It is kept apart from customProtocols so that a protocol used
+// in the wrong direction is rejected instead of being stripped and then
+// silently dropped.
+var customInboundProtocols = map[string]bool{
+	"tun-mips": true,
+}
+
+// customConfig is everything stripped from one JSON document before xray
+// parses it.
+type customConfig struct {
+	outbounds []customOutboundJSON
+	inbounds  []customInboundJSON
+}
+
+func (c *customConfig) empty() bool {
+	return c == nil || (len(c.outbounds) == 0 && len(c.inbounds) == 0)
+}
+
+func (c *customConfig) merge(other *customConfig) {
+	if other == nil {
+		return
+	}
+	c.outbounds = append(c.outbounds, other.outbounds...)
+	c.inbounds = append(c.inbounds, other.inbounds...)
+}
+
+// stripCustom removes hint/proxy outbounds and inbounds from raw JSON and
+// returns the modified document with the stripped descriptors. Invalid JSON
+// or a document without those arrays is returned unchanged, nothing
+// stripped, for xray to report on.
+func stripCustom(raw []byte) ([]byte, *customConfig, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return raw, nil, nil
 	}
-	outboundsRaw, ok := doc["outbounds"]
-	if !ok {
-		return raw, nil, nil
-	}
-	var outbounds []json.RawMessage
-	if err := json.Unmarshal(outboundsRaw, &outbounds); err != nil {
-		return raw, nil, nil
-	}
+	custom := &customConfig{}
+	changed := false
 
-	var remaining []json.RawMessage
-	var custom []customOutboundJSON
-	for _, ob := range outbounds {
-		var probe struct {
-			Protocol string `json:"protocol"`
-		}
-		if err := json.Unmarshal(ob, &probe); err != nil {
-			remaining = append(remaining, ob)
-			continue
-		}
-		if customProtocols[probe.Protocol] {
-			var c customOutboundJSON
-			if err := json.Unmarshal(ob, &c); err == nil {
-				custom = append(custom, c)
+	if outboundsRaw, ok := doc["outbounds"]; ok {
+		var outbounds []json.RawMessage
+		if err := json.Unmarshal(outboundsRaw, &outbounds); err == nil {
+			var remaining []json.RawMessage
+			for _, ob := range outbounds {
+				var probe struct {
+					Protocol string `json:"protocol"`
+					Tag      string `json:"tag"`
+				}
+				if err := json.Unmarshal(ob, &probe); err != nil {
+					remaining = append(remaining, ob)
+					continue
+				}
+				if customInboundProtocols[probe.Protocol] {
+					return raw, nil, errors.New("protocol ", probe.Protocol, " is an inbound, not valid as outbound (tag ", probe.Tag, ")")
+				}
+				if !customProtocols[probe.Protocol] {
+					remaining = append(remaining, ob)
+					continue
+				}
+				var c customOutboundJSON
+				if err := json.Unmarshal(ob, &c); err != nil {
+					return raw, nil, errors.New("invalid ", probe.Protocol, " outbound (tag ", probe.Tag, ")").Base(err)
+				}
+				custom.outbounds = append(custom.outbounds, c)
 			}
-		} else {
-			remaining = append(remaining, ob)
+			if len(custom.outbounds) > 0 {
+				newOutbounds, err := json.Marshal(remaining)
+				if err != nil {
+					return raw, nil, err
+				}
+				doc["outbounds"] = newOutbounds
+				changed = true
+			}
 		}
 	}
 
-	if len(custom) == 0 {
-		return raw, nil, nil
+	if inboundsRaw, ok := doc["inbounds"]; ok {
+		var inbounds []json.RawMessage
+		if err := json.Unmarshal(inboundsRaw, &inbounds); err == nil {
+			var remaining []json.RawMessage
+			for _, ib := range inbounds {
+				var probe struct {
+					Protocol string `json:"protocol"`
+					Tag      string `json:"tag"`
+				}
+				if err := json.Unmarshal(ib, &probe); err != nil {
+					remaining = append(remaining, ib)
+					continue
+				}
+				if customProtocols[probe.Protocol] {
+					return raw, nil, errors.New("protocol ", probe.Protocol, " is an outbound, not valid as inbound (tag ", probe.Tag, ")")
+				}
+				if !customInboundProtocols[probe.Protocol] {
+					remaining = append(remaining, ib)
+					continue
+				}
+				var c customInboundJSON
+				if err := json.Unmarshal(ib, &c); err != nil {
+					return raw, nil, errors.New("invalid ", probe.Protocol, " inbound (tag ", probe.Tag, ")").Base(err)
+				}
+				custom.inbounds = append(custom.inbounds, c)
+			}
+			if len(custom.inbounds) > 0 {
+				newInbounds, err := json.Marshal(remaining)
+				if err != nil {
+					return raw, nil, err
+				}
+				doc["inbounds"] = newInbounds
+				changed = true
+			}
+		}
 	}
 
-	newOutbounds, err := json.Marshal(remaining)
-	if err != nil {
-		return raw, nil, err
+	if !changed {
+		return raw, nil, nil
 	}
-	doc["outbounds"] = newOutbounds
 	modified, err := json.Marshal(doc)
 	if err != nil {
 		return raw, nil, err
@@ -146,11 +225,80 @@ func stripCustomOutbounds(raw []byte) ([]byte, []customOutboundJSON, error) {
 	return modified, custom, nil
 }
 
+// buildCustomInbounds converts stripped inbound descriptors into
+// InboundHandlerConfig entries. The receiver settings carry the sniffing
+// block so the proxyman builds the same sniffing context it would for a
+// native inbound; there is no port because the device is the input.
+func buildCustomInbounds(customs []customInboundJSON) ([]*xray_core.InboundHandlerConfig, error) {
+	result := make([]*xray_core.InboundHandlerConfig, 0, len(customs))
+	for _, c := range customs {
+		receiver := &xray_proxyman.ReceiverConfig{}
+		if c.Sniffing != nil {
+			sniffing, err := c.Sniffing.Build()
+			if err != nil {
+				return nil, errors.New("invalid sniffing settings for tag ", c.Tag).Base(err)
+			}
+			receiver.SniffingSettings = sniffing
+		}
+		var proxySettings *serial.TypedMessage
+		switch c.Protocol {
+		case "tun-mips":
+			var raw hint_tunmips.ConfigJSON
+			if len(c.Settings) == 0 {
+				return nil, errors.New("tun-mips inbound (tag ", c.Tag, ") has no settings")
+			}
+			if err := json.Unmarshal(c.Settings, &raw); err != nil {
+				return nil, errors.New("invalid tun-mips settings for tag ", c.Tag).Base(err)
+			}
+			cfg, err := raw.Build()
+			if err != nil {
+				return nil, errors.New("invalid tun-mips settings for tag ", c.Tag).Base(err)
+			}
+			proxySettings = serial.ToTypedMessage(cfg)
+		default:
+			return nil, errors.New("unknown custom inbound protocol ", c.Protocol)
+		}
+		result = append(result, &xray_core.InboundHandlerConfig{
+			Tag:              c.Tag,
+			ReceiverSettings: serial.ToTypedMessage(receiver),
+			ProxySettings:    proxySettings,
+		})
+	}
+	return result, nil
+}
+
+// appendCustom adds the stripped descriptors to a built core config.
+func appendCustom(coreConfig *xray_core.Config, custom *customConfig) error {
+	if custom.empty() {
+		return nil
+	}
+	if len(custom.outbounds) > 0 {
+		customOutbounds, err := buildCustomOutbounds(custom.outbounds)
+		if err != nil {
+			return err
+		}
+		coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
+	}
+	if len(custom.inbounds) > 0 {
+		customInbounds, err := buildCustomInbounds(custom.inbounds)
+		if err != nil {
+			return err
+		}
+		coreConfig.Inbound = append(coreConfig.Inbound, customInbounds...)
+	}
+	return nil
+}
+
 // buildCustomOutbounds converts stripped custom outbound JSON descriptors into
 // xray OutboundHandlerConfig proto messages ready to append to coreConfig.Outbound.
 func buildCustomOutbounds(customs []customOutboundJSON) ([]*xray_core.OutboundHandlerConfig, error) {
 	result := make([]*xray_core.OutboundHandlerConfig, 0, len(customs))
 	for _, c := range customs {
+		senderSettings, err := buildCustomSenderSettings(c.StreamSettings)
+		if err != nil {
+			return nil, errors.New("invalid stream settings for tag ", c.Tag).Base(err)
+		}
+
 		var proxySettings *serial.TypedMessage
 		switch c.Protocol {
 		case "anytls":
@@ -182,11 +330,48 @@ func buildCustomOutbounds(customs []customOutboundJSON) ([]*xray_core.OutboundHa
 		}
 		result = append(result, &xray_core.OutboundHandlerConfig{
 			Tag:            c.Tag,
-			SenderSettings: serial.ToTypedMessage(&xray_proxyman.SenderConfig{}),
+			SenderSettings: senderSettings,
 			ProxySettings:  proxySettings,
 		})
 	}
 	return result, nil
+}
+
+func buildCustomSenderSettings(streamSettings json.RawMessage) (*serial.TypedMessage, error) {
+	if len(streamSettings) == 0 {
+		return serial.ToTypedMessage(&xray_proxyman.SenderConfig{}), nil
+	}
+
+	type outboundJSON struct {
+		Protocol       string          `json:"protocol"`
+		Tag            string          `json:"tag"`
+		StreamSettings json.RawMessage `json:"streamSettings"`
+	}
+	raw, err := json.Marshal(struct {
+		Outbounds []outboundJSON `json:"outbounds"`
+	}{
+		Outbounds: []outboundJSON{{
+			Protocol:       "freedom",
+			Tag:            "v2raya-native-sender",
+			StreamSettings: streamSettings,
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	config, err := conf_serial.DecodeJSONConfig(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	coreConfig, err := config.Build()
+	if err != nil {
+		return nil, err
+	}
+	if len(coreConfig.Outbound) != 1 || coreConfig.Outbound[0].SenderSettings == nil {
+		return nil, errors.New("failed to build sender settings")
+	}
+	return coreConfig.Outbound[0].SenderSettings, nil
 }
 
 // injectMultiObservatory appends the multiobservatory.Config TypedMessage to coreConfig.App.
@@ -338,7 +523,7 @@ func injectCompatService(coreConfig *xray_core.Config) {
 // also extracts the extendedJSON fields (e.g. multiObservatory).
 // Custom-protocol outbounds (anytls, juicity) are stripped from the JSON
 // before xray processes it, and returned separately.
-func loadAndExtend(arg string) (*xray_conf.Config, *extendedJSON, []customOutboundJSON, error) {
+func loadAndExtend(arg string) (*xray_conf.Config, *extendedJSON, *customConfig, error) {
 	r, err := confloader.LoadConfig(arg)
 	if err != nil {
 		return nil, nil, nil, errors.New("failed to read config: ", arg).Base(err)
@@ -347,9 +532,9 @@ func loadAndExtend(arg string) (*xray_conf.Config, *extendedJSON, []customOutbou
 	if err != nil {
 		return nil, nil, nil, errors.New("failed to read config bytes: ", arg).Base(err)
 	}
-	modified, customs, err := stripCustomOutbounds(raw)
+	modified, customs, err := stripCustom(raw)
 	if err != nil {
-		return nil, nil, nil, errors.New("failed to strip custom outbounds: ", arg).Base(err)
+		return nil, nil, nil, errors.New("failed to strip custom protocols: ", arg).Base(err)
 	}
 	c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
 	if err != nil {
@@ -367,7 +552,7 @@ func loadAndExtend(arg string) (*xray_conf.Config, *extendedJSON, []customOutbou
 func buildConfigFromFiles(files []*xray_core.ConfigSource) (*xray_core.Config, error) {
 	cf := &xray_conf.Config{}
 	var ext *extendedJSON
-	var allCustoms []customOutboundJSON
+	allCustoms := &customConfig{}
 
 	for i, file := range files {
 		errors.LogInfo(context.Background(), "v2raya-core: reading config: ", file)
@@ -380,12 +565,12 @@ func buildConfigFromFiles(files []*xray_core.ConfigSource) (*xray_core.Config, e
 			return nil, errors.New("failed to read config bytes: ", file).Base(err)
 		}
 
-		// Strip custom outbounds before passing to xray.
-		modified, customs, err := stripCustomOutbounds(raw)
+		// Strip custom protocols before passing to xray.
+		modified, customs, err := stripCustom(raw)
 		if err != nil {
-			return nil, errors.New("failed to strip custom outbounds: ", file).Base(err)
+			return nil, errors.New("failed to strip custom protocols: ", file).Base(err)
 		}
-		allCustoms = append(allCustoms, customs...)
+		allCustoms.merge(customs)
 
 		c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
 		if err != nil {
@@ -415,12 +600,8 @@ func buildConfigFromFiles(files []*xray_core.ConfigSource) (*xray_core.Config, e
 	}
 	injectCompatService(coreConfig)
 	reorderAppsForAPIReadiness(coreConfig)
-	if len(allCustoms) > 0 {
-		customOutbounds, err := buildCustomOutbounds(allCustoms)
-		if err != nil {
-			return nil, err
-		}
-		coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
+	if err := appendCustom(coreConfig, allCustoms); err != nil {
+		return nil, err
 	}
 	return coreConfig, nil
 }
@@ -436,7 +617,7 @@ func init() {
 		Extension: []string{"json"},
 		Loader: func(input interface{}) (*xray_core.Config, error) {
 			var ext *extendedJSON
-			var allCustoms []customOutboundJSON
+			allCustoms := &customConfig{}
 
 			switch v := input.(type) {
 			case cmdarg.Arg:
@@ -456,7 +637,7 @@ func init() {
 					if e != nil && (e.MultiObservatory != nil || e.BurstObservatory != nil) {
 						ext = e
 					}
-					allCustoms = append(allCustoms, customs...)
+					allCustoms.merge(customs)
 				}
 				coreConfig, err := cf.Build()
 				if err != nil {
@@ -469,12 +650,8 @@ func init() {
 				}
 				injectCompatService(coreConfig)
 				reorderAppsForAPIReadiness(coreConfig)
-				if len(allCustoms) > 0 {
-					customOutbounds, err := buildCustomOutbounds(allCustoms)
-					if err != nil {
-						return nil, err
-					}
-					coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
+				if err := appendCustom(coreConfig, allCustoms); err != nil {
+					return nil, err
 				}
 				return coreConfig, nil
 
@@ -483,9 +660,9 @@ func init() {
 				if err != nil {
 					return nil, errors.New("failed to read config reader").Base(err)
 				}
-				modified, customs, err := stripCustomOutbounds(raw)
+				modified, customs, err := stripCustom(raw)
 				if err != nil {
-					return nil, errors.New("failed to strip custom outbounds").Base(err)
+					return nil, errors.New("failed to strip custom protocols").Base(err)
 				}
 				c, err := conf_serial.DecodeJSONConfig(bytes.NewReader(modified))
 				if err != nil {
@@ -504,12 +681,8 @@ func init() {
 				}
 				injectCompatService(coreConfig)
 				reorderAppsForAPIReadiness(coreConfig)
-				if len(customs) > 0 {
-					customOutbounds, err := buildCustomOutbounds(customs)
-					if err != nil {
-						return nil, err
-					}
-					coreConfig.Outbound = append(coreConfig.Outbound, customOutbounds...)
+				if err := appendCustom(coreConfig, customs); err != nil {
+					return nil, err
 				}
 				return coreConfig, nil
 

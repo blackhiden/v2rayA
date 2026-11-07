@@ -7,11 +7,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/v2rayA/v2rayA/common"
 	"github.com/v2rayA/v2rayA/common/httpClient"
 	"github.com/v2rayA/v2rayA/common/resolv"
 	"github.com/v2rayA/v2rayA/db/configure"
@@ -27,14 +29,13 @@ func Ping(which []*configure.Which, timeout time.Duration) (_ []*configure.Which
 	var whiches = configure.NewWhiches(which)
 	// Deduplicate whiches to Ping
 	which = whiches.GetNonDuplicated()
-	// Temporarily disable transparent proxy
-	v2ray.ProcessManager.CheckAndStopTransparentProxy(nil)
-	defer func() {
-		if e := v2ray.ProcessManager.CheckAndSetupTransparentProxy(true, nil, v2ray.ProcessManager.GetRunningTemplate()); e != nil {
-			err = fmt.Errorf("Ping: %v: %v", e, err)
-		}
-	}()
+	// Do not remove interception for a dashboard probe: unrelated traffic
+	// could otherwise escape directly during this window. Only the probe's
+	// TCP and DNS sockets bypass interception: marked on Linux, bound to
+	// the physical egress interface for macOS and Windows TUN.
+	dialer := httpClient.DirectDialer(timeout, v2ray.IsTransparentOn(configure.GetSettingNotNil()))
 	// Multi-threaded asynchronous ping
+	loc := configure.NewLocator()
 	wg := new(sync.WaitGroup)
 	for i, v := range which {
 		if v.TYPE == configure.SubscriptionType { // subscriptions cannot be pinged
@@ -42,7 +43,7 @@ func Ping(which []*configure.Which, timeout time.Duration) (_ []*configure.Which
 		}
 		wg.Add(1)
 		go func(i int) {
-			_ = which[i].Ping(timeout)
+			_ = which[i].PingWithDialer(loc, timeout, dialer)
 			wg.Done()
 		}(i)
 	}
@@ -56,6 +57,14 @@ func Ping(which []*configure.Which, timeout time.Duration) (_ []*configure.Which
 }
 
 func addHosts(tmpl *v2ray.Template, vms []serverObj.ServerObj) {
+	// entries whose server could not be located are left nil by the caller
+	located := vms[:0:0]
+	for _, v := range vms {
+		if v != nil {
+			located = append(located, v)
+		}
+	}
+	vms = located
 	if tmpl.DNS == nil {
 		tmpl.DNS = new(coreObj.DNS)
 	}
@@ -95,20 +104,30 @@ func addHosts(tmpl *v2ray.Template, vms []serverObj.ServerObj) {
 }
 
 func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParallel int, showLog bool, customTestUrl string) ([]*configure.Which, error) {
+	if customTestUrl != "" {
+		testURL, err := url.Parse(customTestUrl)
+		if err != nil || (testURL.Scheme != "http" && testURL.Scheme != "https") || testURL.Hostname() == "" {
+			return nil, common.Coded("INVALID_TEST_URL", fmt.Errorf("test URL %q must be an HTTP or HTTPS URL with a host", customTestUrl), map[string]interface{}{"testUrl": customTestUrl})
+		}
+	}
 	var whiches = configure.NewWhiches(which)
+	which = whiches.Get()
 	for i := len(which) - 1; i >= 0; i-- {
 		if which[i].TYPE == configure.SubscriptionType { // remove subscriptionType
 			which = append(which[:i], which[i+1:]...)
 		}
 	}
-	which = whiches.Get()
+	if len(which) == 0 {
+		return which, nil
+	}
 	v2rayRunning := v2ray.ProcessManager.Running()
 	wg := new(sync.WaitGroup)
 	vms := make([]serverObj.ServerObj, len(which))
 	//init vmessInfos
+	loc := configure.NewLocator()
 	for i := range which {
 		which[i].Latency = ""
-		sr, err := which[i].LocateServerRaw()
+		sr, err := loc.Locate(&which[i].NodeRef)
 		if err != nil {
 			which[i].Latency = err.Error()
 			continue
@@ -137,8 +156,20 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 		})
 		tmpl.SetAPI(nil)
 	}
+	// Until the process manager owns the template, its API producers are
+	// ours to stop on an early return.
+	handedOver := false
+	defer func() {
+		if !handedOver {
+			_ = tmpl.Close()
+		}
+	}()
 	inboundPortMap := make([]string, len(vms))
 	pluginPortMap := make(map[int]int)
+	listenAddr := "127.0.0.1"
+	if tmpl.Setting != nil && tmpl.Setting.PortSharing {
+		listenAddr = "0.0.0.0"
+	}
 	var toClose []io.Closer
 	defer func() {
 		for _, l := range toClose {
@@ -153,18 +184,18 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 		t := time.Now()
 		var port int
 		for {
-			l, err := net.Listen("tcp", "0.0.0.0:0")
+			l, err := net.Listen("tcp", listenAddr+":0")
 			if err == nil {
 				port = l.Addr().(*net.TCPAddr).Port
 				toClose = append(toClose, l)
-				l2, err2 := net.ListenPacket("udp", "0.0.0.0:"+strconv.Itoa(port))
+				l2, err2 := net.ListenPacket("udp", listenAddr+":"+strconv.Itoa(port))
 				if err2 == nil {
 					toClose = append(toClose, l2)
 					break
 				}
 			}
 			if time.Since(t) > 3*time.Second {
-				return nil, fmt.Errorf("timeout: failed to find availble ports")
+				return nil, fmt.Errorf("could not find a free local port for the latency test within 3 s")
 			}
 		}
 		v2rayInboundPort := strconv.Itoa(port)
@@ -183,7 +214,7 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 					}
 				}
 				if time.Since(t) > 3*time.Second {
-					return nil, fmt.Errorf("timeout: failed to find availble ports")
+					return nil, fmt.Errorf("could not find a free local port for the latency test within 3 s")
 				}
 			}
 			pluginPort = port
@@ -197,6 +228,7 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 			}
 			return nil, err
 		}
+		tmpl.Inbounds[len(tmpl.Inbounds)-1].Listen = listenAddr
 		inboundPortMap[i] = v2rayInboundPort
 	}
 	for _, l := range toClose {
@@ -208,8 +240,14 @@ func TestHttpLatency(which []*configure.Which, timeout time.Duration, maxParalle
 	addHosts(tmpl, vms)
 	tmpl.SetOutboundSockopt()
 	v2ray.ProcessManager.SetLatencyTesting(true)
+	handedOver = true
 	if err := v2ray.ProcessManager.Start(tmpl); err != nil {
 		v2ray.ProcessManager.SetLatencyTesting(false)
+		if v2rayRunning && configure.GetConnectedServers() != nil {
+			if restoreErr := v2ray.UpdateV2RayConfig(); restoreErr != nil {
+				return nil, fmt.Errorf("%v; cannot restart v2ray-core: %w", err, restoreErr)
+			}
+		}
 		return nil, err
 	}
 	//limit the concurrency
@@ -264,7 +302,11 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 	if len(customTestUrl) != 0 {
 		testUrl = customTestUrl
 	}
-	req, _ := http.NewRequest("GET", testUrl, nil)
+	req, err := http.NewRequest("GET", testUrl, nil)
+	if err != nil {
+		which.Latency = "SYSTEM ERROR"
+		return
+	}
 	//req, _ := http.NewRequest("GET", "http://www.gstatic.com/generate_204", nil)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Cache-Control", "no-cache")
@@ -272,6 +314,17 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 	req.Header.Set("Connection", "close")
 	req.Header.Set("User-Agent", "curl/7.70.0")
 	resp, err := c.Do(req)
+	setHTTPLatencyResult(which, resp, err, t)
+}
+
+func setHTTPLatencyResult(which *configure.Which, resp *http.Response, err error, started time.Time) {
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if resp == nil && err == nil {
+		which.Latency = "SYSTEM ERROR"
+		return
+	}
 	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		if err != nil {
 			var netErr net.Error
@@ -288,31 +341,26 @@ func httpLatency(which *configure.Which, port string, timeout time.Duration, cus
 				which.Latency = "NOT STABLE"
 				return
 			}
-			which.Latency = err.Error()
+			log.Debug("HTTP latency proxy request failed: %T", err)
+			which.Latency = "PROXY ERROR"
 		} else {
 			which.Latency = "BAD RESPONSE"
 		}
 		return
 	}
-	_ = resp.Body.Close()
-	which.Latency = fmt.Sprintf("%.0fms", time.Since(t).Seconds()*1000)
+	which.Latency = fmt.Sprintf("%.0fms", time.Since(started).Seconds()*1000)
 }
 
-func IsSupported(which configure.Which) (bool, error) {
-	var (
-		tmpl *v2ray.Template
-		err  error
-	)
-
-	tmpl = v2ray.NewEmptyTemplate(&configure.Setting{
+func isSupportedObj(obj serverObj.ServerObj) (bool, error) {
+	tmpl := v2ray.NewEmptyTemplate(&configure.Setting{
 		RulePortMode: configure.WhitelistMode,
 		TcpFastOpen:  configure.Default,
 		MuxOn:        configure.No,
 		Transparent:  configure.TransparentClose,
 	})
-	tmpl.SetAPI(nil)
-	serverRaw, _ := which.LocateServerRaw()
-	err = tmpl.InsertMappingOutbound(serverRaw.ServerObj, "0", false, 0, "socks")
+	// The template is thrown away: SetAPI would start a traffic producer
+	// that nothing closes.
+	err := tmpl.InsertMappingOutbound(obj, "0", false, 0, "socks")
 	if err != nil {
 		if strings.Contains(err.Error(), "unsupported") {
 			return false, err

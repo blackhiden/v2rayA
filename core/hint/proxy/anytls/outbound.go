@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"sync"
 	"time"
 
 	anytls_padding "anytls/proxy/padding"
@@ -17,22 +18,24 @@ import (
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 
-	"github.com/arsydoni4326-alt/xray-core/common"
-	xray_buf "github.com/arsydoni4326-alt/xray-core/common/buf"
-	"github.com/arsydoni4326-alt/xray-core/common/errors"
-	xray_net "github.com/arsydoni4326-alt/xray-core/common/net"
-	xray_session "github.com/arsydoni4326-alt/xray-core/common/session"
-	"github.com/arsydoni4326-alt/xray-core/common/task"
-	"github.com/arsydoni4326-alt/xray-core/transport"
-	"github.com/arsydoni4326-alt/xray-core/transport/internet"
+	"github.com/xtls/xray-core/common"
+	xray_buf "github.com/xtls/xray-core/common/buf"
+	"github.com/xtls/xray-core/common/errors"
+	xray_net "github.com/xtls/xray-core/common/net"
+	xray_session "github.com/xtls/xray-core/common/session"
+	"github.com/xtls/xray-core/common/task"
+	"github.com/xtls/xray-core/transport"
+	"github.com/xtls/xray-core/transport/internet"
 
 	"github.com/v2rayA/v2raya-core/hint/tlsutil"
 )
 
 // Client is the anytls outbound handler.
 type Client struct {
-	config        *ClientConfig
-	sessionClient *session.Client
+	config            *ClientConfig
+	sessionClient     *session.Client
+	newSessionClient  func(internet.Dialer) *session.Client
+	sessionClientOnce sync.Once
 }
 
 // NewClient creates a new anytls outbound handler.
@@ -48,15 +51,13 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	passwordHash := make([]byte, 32)
 	copy(passwordHash, hash[:])
 
-	serverAddr := fmt.Sprintf("%s:%d", config.Address, config.Port)
 	sni := config.Sni
 	if sni == "" {
 		sni = config.Address
 	}
 
 	tlsCfg := &tls.Config{
-		ServerName:         sni,
-		InsecureSkipVerify: config.AllowInsecure, // #nosec G402 -- user-configurable
+		ServerName: sni,
 	}
 	if config.PinnedPeerCertificateChainSha256 != "" {
 		hash, err := tlsutil.ParsePinnedChain(config.PinnedPeerCertificateChainSha256)
@@ -75,60 +76,58 @@ func NewClient(ctx context.Context, config *ClientConfig) (*Client, error) {
 	}
 
 	serverDest := xray_net.TCPDestination(xray_net.ParseAddress(config.Address), xray_net.Port(config.Port))
-	_ = serverAddr // kept for readability
 
-	dialOut := anytls_util.DialOutFunc(func(ctx context.Context) (net.Conn, error) {
-		rawConn, err := internet.DialSystem(ctx, serverDest, nil)
-		if err != nil {
-			// Fallback: plain TCP dial
-			d := &net.Dialer{Timeout: 10 * time.Second}
-			rawConn, err = d.DialContext(ctx, "tcp", serverAddr)
+	newSessionClient := func(dialer internet.Dialer) *session.Client {
+		dialOut := anytls_util.DialOutFunc(func(ctx context.Context) (net.Conn, error) {
+			rawConn, err := dialer.Dial(ctx, serverDest)
 			if err != nil {
 				return nil, fmt.Errorf("anytls: failed to dial server: %w", err)
 			}
-		}
 
-		tlsConn := tls.Client(rawConn, tlsCfg)
+			tlsConn := tls.Client(rawConn, tlsCfg)
 
-		// Write password SHA256 + padding (protocol handshake)
-		b := buf.NewPacket()
-		defer b.Release()
+			// Write password SHA256 + padding (protocol handshake)
+			b := buf.NewPacket()
+			defer b.Release()
 
-		b.Write(passwordHash)
-		var paddingLen int
-		if pad := anytls_padding.DefaultPaddingFactory.Load().GenerateRecordPayloadSizes(0); len(pad) > 0 {
-			paddingLen = pad[0]
-		}
-		binary.BigEndian.PutUint16(b.Extend(2), uint16(paddingLen))
-		if paddingLen > 0 {
-			b.WriteZeroN(paddingLen)
-		}
-		if _, err = b.WriteTo(tlsConn); err != nil {
-			tlsConn.Close()
-			return nil, fmt.Errorf("anytls: failed to write handshake: %w", err)
-		}
+			b.Write(passwordHash)
+			var paddingLen int
+			if pad := anytls_padding.DefaultPaddingFactory.Load().GenerateRecordPayloadSizes(0); len(pad) > 0 {
+				paddingLen = pad[0]
+			}
+			binary.BigEndian.PutUint16(b.Extend(2), uint16(paddingLen))
+			if paddingLen > 0 {
+				b.WriteZeroN(paddingLen)
+			}
+			if _, err = b.WriteTo(tlsConn); err != nil {
+				tlsConn.Close()
+				return nil, fmt.Errorf("anytls: failed to write handshake: %w", err)
+			}
 
-		return tlsConn, nil
-	})
+			return tlsConn, nil
+		})
 
-	bgCtx := context.Background()
-	sessionClient := session.NewClient(
-		bgCtx,
-		dialOut,
-		&anytls_padding.DefaultPaddingFactory,
-		30*time.Second,
-		30*time.Second,
-		minIdle,
-	)
+		return session.NewClient(
+			context.Background(),
+			dialOut,
+			&anytls_padding.DefaultPaddingFactory,
+			30*time.Second,
+			30*time.Second,
+			minIdle,
+		)
+	}
 
 	return &Client{
-		config:        config,
-		sessionClient: sessionClient,
+		config:           config,
+		newSessionClient: newSessionClient,
 	}, nil
 }
 
 // Process implements proxy.Outbound.
-func (c *Client) Process(ctx context.Context, link *transport.Link, _ internet.Dialer) error {
+func (c *Client) Process(ctx context.Context, link *transport.Link, dialer internet.Dialer) error {
+	c.sessionClientOnce.Do(func() {
+		c.sessionClient = c.newSessionClient(dialer)
+	})
 	outbounds := xray_session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	if !ob.Target.IsValid() {

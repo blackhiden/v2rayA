@@ -1,10 +1,11 @@
 package common
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/v2rayA/v2rayA/infra/dataStructure/lru"
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 type Code string
@@ -14,7 +15,25 @@ type Resp struct {
 	Body   gin.H
 }
 
-var RespCache = lru.New(lru.FixedLength, 10)
+type codedResponse struct {
+	err   error
+	coded *CodedError
+}
+
+func codedErrorBody(err error, coded *CodedError) gin.H {
+	body := gin.H{
+		"code":      FAIL,
+		"message":   err.Error(),
+		"data":      nil,
+		"errorCode": coded.Code,
+	}
+	if coded.Params != nil {
+		body["params"] = coded.Params
+	}
+	return body
+}
+
+var RespCache, _ = lru.New[string, Resp](10)
 
 const (
 	SUCCESS         = "SUCCESS"
@@ -26,21 +45,12 @@ const (
 // 当code为FAIL时，data为string类型返回给前端的消息
 func Response(ctx *gin.Context, code Code, data interface{}) (status int, body gin.H) {
 	if reqId := ctx.GetHeader(RequestIdHeader); reqId != "" {
-		if resp := RespCache.Get(reqId); resp != nil {
-			resp, ok := resp.(Resp)
-			if !ok {
-				ctx.JSON(http.StatusInternalServerError, gin.H{
-					"code":    FAIL,
-					"message": "internal cache error",
-					"data":    nil,
-				})
-				return http.StatusInternalServerError, nil
-			}
+		if resp, ok := RespCache.Get(reqId); ok {
 			ctx.JSON(resp.Status, resp.Body)
 			return resp.Status, resp.Body
 		}
 		defer func() {
-			RespCache.Insert(reqId, Resp{
+			RespCache.Add(reqId, Resp{
 				Status: status,
 				Body:   body,
 			})
@@ -52,14 +62,17 @@ func Response(ctx *gin.Context, code Code, data interface{}) (status int, body g
 		status = http.StatusUnauthorized
 	}
 	if code == FAIL {
-		switch data.(type) {
+		switch data := data.(type) {
 		case string:
-			data = data.(string)
 			body = gin.H{
 				"code":    code,
 				"message": data,
 				"data":    nil,
 			}
+		case *CodedError:
+			body = codedErrorBody(data, data)
+		case codedResponse:
+			body = codedErrorBody(data.err, data.coded)
 		default:
 			body = gin.H{
 				"code":    code,
@@ -80,6 +93,11 @@ func Response(ctx *gin.Context, code Code, data interface{}) (status int, body g
 }
 
 func ResponseError(ctx *gin.Context, err error) {
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		Response(ctx, FAIL, codedResponse{err: err, coded: coded})
+		return
+	}
 	Response(ctx, FAIL, err.Error())
 }
 func ResponseSuccess(ctx *gin.Context, data interface{}) {

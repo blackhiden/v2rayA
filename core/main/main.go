@@ -9,7 +9,7 @@ package main
 import (
 "os"
 
-"github.com/arsydoni4326-alt/xray-core/main/commands/base"
+"github.com/xtls/xray-core/main/commands/base"
 _ "github.com/v2rayA/v2raya-core/main/distro/all"
 )
 

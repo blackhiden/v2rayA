@@ -36,6 +36,9 @@ func (t *Template) SetOutboundSockopt() {
 			tmp := t.Setting.TcpFastOpen == configure.Yes
 			t.Outbounds[i].StreamSettings.Sockopt.TCPFastOpen = &tmp
 		}
+		if t.Setting.MuxOn == configure.Yes && t.Outbounds[i].Protocol == "vmess" && t.Outbounds[i].Mux == nil {
+			t.Outbounds[i].Mux = &coreObj.Mux{Enabled: true, Concurrency: t.Setting.Mux}
+		}
 		t.checkAndSetMark(&t.Outbounds[i], mark)
 	}
 }
@@ -63,6 +66,11 @@ func (t *Template) setDualStack() {
 		}
 		if tag == "dns-in" {
 			// Handled separately — skip generic duplication.
+			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
+			continue
+		}
+		if t.Inbounds[i].Protocol == "tun-mips" {
+			// One device, no listen address; a twin would open it twice.
 			inbounds6[i].Tag = "THIS_IS_A_DROPPED_TAG"
 			continue
 		}
@@ -221,6 +229,7 @@ func (t *Template) resolveOutbounds(
 	type _outbound struct {
 		weight   int
 		outbound coreObj.OutboundObject
+		balancer bool
 	}
 	serverInfo2Index := make(map[*serverInfo]int)
 	for i := range serverData.ServerInfos {
@@ -230,10 +239,7 @@ func (t *Template) resolveOutbounds(
 	outboundTags = make([]string, len(serverData.ServerInfos))
 	var extraOutbounds []coreObj.OutboundObject
 	var outbounds []_outbound
-	setting := t.Setting
-	if setting == nil {
-		setting = configure.GetSettingNotNil()
-	}
+	setting := configure.GetSettingNotNil()
 	// Load balancing is a proxy-group concern. Build every group from the
 	// outbound name instead of grouping by server object; the latter split a
 	// group containing different servers into unrelated one-member balancers.
@@ -248,6 +254,11 @@ func (t *Template) resolveOutbounds(
 		if !loadBalance {
 			// Preserve ordinary group behavior: only its first selected member is
 			// active unless this group has explicitly enabled load balancing.
+			// All members are still recorded in serverInfoMap so TUN exclusion
+			// and snapshot IP collection see every node in the group.
+			for _, si := range sInfos {
+				t.serverInfoMap[si.Info.GetName()] = si
+			}
 			sInfo := sInfos[0]
 			index := serverInfo2Index[sInfo]
 			c, err := sInfo.Info.Configuration(serverObj.PriorInfo{
@@ -262,7 +273,7 @@ func (t *Template) resolveOutbounds(
 			}
 			t.serverInfoMap[outboundName] = sInfo
 			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound})
+			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound, balancer: false})
 			outboundTags[index] = outboundName
 			supportUDP[outboundName] = c.UDPSupport
 			continue
@@ -284,7 +295,7 @@ func (t *Template) resolveOutbounds(
 			}
 			t.serverInfoMap[memberTag] = sInfo
 			extraOutbounds = append(extraOutbounds, c.ExtraOutbounds...)
-			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound})
+			outbounds = append(outbounds, _outbound{weight: index, outbound: c.CoreOutbound, balancer: true})
 			outboundTags[index] = memberTag
 			selector = append(selector, memberTag)
 			if existing, ok := supportUDP[groupTag]; !ok {
@@ -331,6 +342,11 @@ func (t *Template) checkAndSetMark(o *coreObj.OutboundObject, mark int) {
 		o.StreamSettings.Sockopt = new(coreObj.Sockopt)
 	}
 	o.StreamSettings.Sockopt.Mark = &mark
+	// Where the mark means nothing to the kernel, the TUN needs the
+	// core's sockets pinned to the physical interface instead.
+	if iface := TunEgressInterfaceIfTun(t.Setting); iface != "" {
+		o.StreamSettings.Sockopt.Interface = iface
+	}
 }
 
 func (t *Template) InsertMappingOutbound(o serverObj.ServerObj, inboundPort string, udpSupport bool, pluginPort int, protocol string) (err error) {

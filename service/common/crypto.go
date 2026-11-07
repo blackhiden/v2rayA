@@ -98,7 +98,7 @@ func Base64URLDecode(s string) (string, error) {
 	return string(raw), err
 }
 
-// StringToUUID5 is from https://github.com/arsydoni4326-alt/xray-core/issues/158
+// StringToUUID5 is from https://github.com/xtls/xray-core/issues/158
 func StringToUUID5(str string) string {
 	var Nil [16]byte
 	h := sha1.New()

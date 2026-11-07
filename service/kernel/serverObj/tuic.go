@@ -26,7 +26,6 @@ type Tuic struct {
 	Password             string `json:"password"`
 	Sni                  string `json:"sni"`
 	DisableSni           bool   `json:"disableSni"`
-	AllowInsecure        bool   `json:"allowInsecure"`
 	Alpn                 string `json:"alpn"`
 	CongestionControl    string `json:"congestionControl"`
 	UdpRelayMode         string `json:"udpRelayMode"`
@@ -42,11 +41,11 @@ func NewTuic(link string) (ServerObj, error) {
 func ParseTuicURL(link string) (data *Tuic, err error) {
 	u, err := url.Parse(link)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: tuic link is not a valid URL; expected tuic://uuid:password@host:port", ErrInvalidParameter)
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: tuic link for %q has a missing or invalid port; expected tuic://uuid:password@host:port", ErrInvalidParameter, u.Hostname())
 	}
 	// u.Query().Get("alpn") only returns the first value if it's encoded in a way that url.Values thinks it's multiple
 	// But usually it's alpn=h3,h2. However, some clients might use alpn=h3&alpn=h2
@@ -59,27 +58,26 @@ func ParseTuicURL(link string) (data *Tuic, err error) {
 		alpn = "h3"
 	}
 
-	data = &Tuic{
-		Name:                 u.Fragment,
-		Server:               u.Hostname(),
-		Port:                 port,
-		UUID:                 u.User.Username(),
-		Password:             u.User.String(),
-		Sni:                  u.Query().Get("sni"),
-		DisableSni:           u.Query().Get("disable_sni") == "true" || u.Query().Get("disable_sni") == "1",
-		AllowInsecure:        u.Query().Get("allow_insecure") == "true" || u.Query().Get("allow_insecure") == "1",
-		Alpn:                 alpn,
-		CongestionControl:    u.Query().Get("congestion_control"),
-		UdpRelayMode:         u.Query().Get("udp_relay_mode"),
-		PinnedPeerCertSha256: u.Query().Get("pinnedPeerCertSha256"),
-		VerifyPeerCertByName: u.Query().Get("verifyPeerCertByName"),
-		Protocol:             "tuic",
+	password := ""
+	if u.User != nil {
+		password, _ = u.User.Password()
 	}
-	if data.Password != "" && strings.Contains(data.Password, ":") {
-		data.Password = strings.SplitN(data.Password, ":", 2)[1]
-	} else if data.Password != "" {
-		// handle case where password might be just the password part if user:pass was not used
-		// but typically u.User.String() is user:pass or user
+
+	data = &Tuic{
+		Name:              u.Fragment,
+		Server:            u.Hostname(),
+		Port:              port,
+		UUID:              u.User.Username(),
+		Password:          password,
+		Sni:               u.Query().Get("sni"),
+		DisableSni:        u.Query().Get("disable_sni") == "true" || u.Query().Get("disable_sni") == "1",
+		Alpn:              alpn,
+		CongestionControl: u.Query().Get("congestion_control"),
+		UdpRelayMode:      u.Query().Get("udp_relay_mode"),
+		// the GUI form and other clients spell these in snake_case
+		PinnedPeerCertSha256: firstNonEmpty(u.Query().Get("pinnedPeerCertSha256"), u.Query().Get("pinned_peer_cert_sha256")),
+		VerifyPeerCertByName: firstNonEmpty(u.Query().Get("verifyPeerCertByName"), u.Query().Get("verify_peer_cert_by_name")),
+		Protocol:             "tuic",
 	}
 	return data, nil
 }
@@ -94,7 +92,6 @@ type tuicSettings struct {
 	UdpRelayMode                     string   `json:"udp_relay_mode,omitempty"`
 	Alpn                             []string `json:"alpn,omitempty"`
 	DisableSni                       bool     `json:"disable_sni,omitempty"`
-	AllowInsecure                    bool     `json:"allow_insecure,omitempty"`
 	PinnedPeerCertificateChainSha256 string   `json:"pinned_peer_certificate_chain_sha256,omitempty"`
 	VerifyPeerCertByName             string   `json:"verifyPeerCertByName,omitempty"`
 }
@@ -114,7 +111,6 @@ func (s *Tuic) Configuration(info PriorInfo) (c Configuration, err error) {
 		UdpRelayMode:                     s.UdpRelayMode,
 		Alpn:                             alpn,
 		DisableSni:                       s.DisableSni,
-		AllowInsecure:                    s.AllowInsecure,
 		PinnedPeerCertificateChainSha256: s.PinnedPeerCertSha256,
 		VerifyPeerCertByName:             s.VerifyPeerCertByName,
 	})
@@ -144,9 +140,6 @@ func (s *Tuic) ExportToURL() string {
 	setValue(&query, "verifyPeerCertByName", s.VerifyPeerCertByName)
 	if s.DisableSni {
 		query.Set("disable_sni", "true")
-	}
-	if s.AllowInsecure {
-		query.Set("allow_insecure", "true")
 	}
 	setValue(&query, "sni", s.Sni)
 	alpn := strings.ReplaceAll(s.Alpn, " ", "")
@@ -191,4 +184,13 @@ func (s *Tuic) GetName() string {
 
 func (s *Tuic) SetName(name string) {
 	s.Name = name
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

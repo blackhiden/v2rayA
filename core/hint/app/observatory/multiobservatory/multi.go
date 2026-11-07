@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	xray_obs "github.com/arsydoni4326-alt/xray-core/app/observatory"
-	"github.com/arsydoni4326-alt/xray-core/app/observatory/burst"
-	"github.com/arsydoni4326-alt/xray-core/common"
-	"github.com/arsydoni4326-alt/xray-core/features/extension"
+	xray_obs "github.com/xtls/xray-core/app/observatory"
+	"github.com/xtls/xray-core/app/observatory/burst"
+	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/features/extension"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -40,10 +40,22 @@ func newLoadBalanceServerData(enabled bool) *ServerData {
 		{Info: &loadBalanceTestServer{name: "B"}, OutboundName: "PROXY"},
 		{Info: &loadBalanceTestServer{name: "C"}, OutboundName: "PROXY"},
 	}
+	link2ServerObj := make(map[string]serverObj.ServerObj)
+	link2ServerInfos := make(map[string][]*serverInfo)
+	for i := range infos {
+		link := infos[i].Info.ExportToURL()
+		link2ServerObj[link] = infos[i].Info
+		link2ServerInfos[link] = append(link2ServerInfos[link], &infos[i])
+	}
 	return &ServerData{
 		ServerInfos: infos,
 		OutboundName2ServerInfos: map[string][]*serverInfo{
 			"PROXY": {&infos[0], &infos[1], &infos[2]},
+		},
+		Link2ServerObj:    link2ServerObj,
+		Link2ServerInfos:  link2ServerInfos,
+		OutboundName2ServerObjs: map[string][]serverObj.ServerObj{
+			"PROXY": {&loadBalanceTestServer{name: "A"}, &loadBalanceTestServer{name: "B"}, &loadBalanceTestServer{name: "C"}},
 		},
 		OutboundName2Setting: map[string]configure.OutboundSetting{
 			"PROXY": {
