@@ -274,22 +274,88 @@ func (p *LiveFlowProducer) Snapshot() []LiveFlowStartData {
 // the line belongs to the private event channel and must not be logged as
 // normal core output, even if it is malformed.
 func ConsumeCoreLiveFlowEvent(line string) bool {
-	if !strings.HasPrefix(line, liveFlowCoreEventPrefix) {
+	if strings.HasPrefix(line, liveFlowCoreEventPrefix) {
+		var event CoreLiveFlowEvent
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, liveFlowCoreEventPrefix)), &event); err != nil {
+			log.Warn("LiveFlow: discarded malformed core event")
+			return true
+		}
+		if len(event.Source) == 0 || len(event.Source) > 512 || len(event.Destination) == 0 || len(event.Destination) > 512 || len(event.Detour) > 512 {
+			log.Warn("LiveFlow: discarded invalid core event")
+			return true
+		}
+
+		GetLiveFlowProducer().RecordCoreAccess(event)
+		return true
+	}
+
+	if event, ok := parseAccessLogLine(line); ok {
+		GetLiveFlowProducer().RecordCoreAccess(event)
+		// Return false so normal Xray access logs continue to be written to standard service logs.
 		return false
 	}
 
-	var event CoreLiveFlowEvent
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(line, liveFlowCoreEventPrefix)), &event); err != nil {
-		log.Warn("LiveFlow: discarded malformed core event")
-		return true
+	return false
+}
+
+// parseAccessLogLine parses a standard Xray access log line such as:
+// "from tcp:127.0.0.1:58946 accepted tcp:appsgenaiserver-pa.clients6.google.com:443 [socks_ipv4 -> proxy]"
+// or with leading timestamp "2006/01/02 15:04:05.123 from ...".
+func parseAccessLogLine(line string) (CoreLiveFlowEvent, bool) {
+	idx := strings.Index(line, "from ")
+	if idx < 0 {
+		return CoreLiveFlowEvent{}, false
 	}
-	if len(event.Source) == 0 || len(event.Source) > 512 || len(event.Destination) == 0 || len(event.Destination) > 512 || len(event.Detour) > 512 {
-		log.Warn("LiveFlow: discarded invalid core event")
-		return true
+	prefix := strings.TrimSpace(line[:idx])
+	var ts int64
+	if prefix != "" {
+		timeStr := prefix
+		if rightBracket := strings.LastIndex(timeStr, "] "); rightBracket >= 0 {
+			timeStr = strings.TrimSpace(timeStr[rightBracket+2:])
+		}
+		if dotIdx := strings.Index(timeStr, "."); dotIdx >= 0 {
+			timeStr = timeStr[:dotIdx]
+		}
+		if t, err := time.Parse("2006/01/02 15:04:05", timeStr); err == nil {
+			ts = t.UnixMilli()
+		}
 	}
 
-	GetLiveFlowProducer().RecordCoreAccess(event)
-	return true
+	rest := line[idx+len("from "):]
+	accIdx := strings.Index(rest, " accepted ")
+	if accIdx < 0 {
+		return CoreLiveFlowEvent{}, false
+	}
+
+	source := strings.TrimSpace(rest[:accIdx])
+	afterAccepted := strings.TrimSpace(rest[accIdx+len(" accepted "):])
+	if source == "" || afterAccepted == "" {
+		return CoreLiveFlowEvent{}, false
+	}
+
+	var destination, detour string
+	if bracketOpen := strings.Index(afterAccepted, " ["); bracketOpen >= 0 {
+		destination = strings.TrimSpace(afterAccepted[:bracketOpen])
+		detourPart := afterAccepted[bracketOpen+2:]
+		if bracketClose := strings.Index(detourPart, "]"); bracketClose >= 0 {
+			detour = strings.TrimSpace(detourPart[:bracketClose])
+		}
+	} else if spaceIdx := strings.Index(afterAccepted, " "); spaceIdx >= 0 {
+		destination = strings.TrimSpace(afterAccepted[:spaceIdx])
+	} else {
+		destination = afterAccepted
+	}
+
+	if destination == "" {
+		return CoreLiveFlowEvent{}, false
+	}
+
+	return CoreLiveFlowEvent{
+		Source:      source,
+		Destination: destination,
+		Detour:      detour,
+		Timestamp:   ts,
+	}, true
 }
 
 func parseLiveFlowEndpoint(raw string) (LiveFlowEndpoint, string, bool) {
@@ -398,7 +464,7 @@ func selectedDetourTag(detour string) string {
 	}
 	normalized := strings.NewReplacer("==>", "->", ">>", "->").Replace(detour)
 	parts := strings.Split(normalized, "->")
-	return strings.Trim(strings.TrimSpace(parts[len(parts)-1]), " 『』")
+	return strings.Trim(strings.TrimSpace(parts[len(parts)-1]), " 『』[]")
 }
 
 func liveFlowSessionID(source, destination LiveFlowEndpoint, chain []LiveFlowProxyNode, protocol string) string {
