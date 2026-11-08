@@ -62,6 +62,73 @@ func TestConsumeCoreLiveFlowEvent(t *testing.T) {
 	if ConsumeCoreLiveFlowEvent("ordinary core log") {
 		t.Fatal("ordinary core log was consumed")
 	}
+	// Standard Xray access log line should be recorded and return false (not swallowed from normal logs)
+	if ConsumeCoreLiveFlowEvent("2026/11/08 11:03:55 from tcp:127.0.0.1:58946 accepted tcp:appsgenaiserver-pa.clients6.google.com:443 [socks_ipv4 -> proxy]") {
+		t.Fatal("standard access log line should not be swallowed (must return false)")
+	}
+	if ConsumeCoreLiveFlowEvent("from tcp:127.0.0.1:58946 accepted tcp:appsgenaiserver-pa.clients6.google.com:443 [socks_ipv4 -> proxy]") {
+		t.Fatal("standard access log line without timestamp should return false")
+	}
+}
+
+func TestParseAccessLogLine(t *testing.T) {
+	tests := []struct {
+		name    string
+		line    string
+		wantOk  bool
+		wantSrc string
+		wantDst string
+		wantDet string
+	}{
+		{
+			name:    "with subsecond timestamp",
+			line:    "2026/11/08 11:03:55.736 from tcp:127.0.0.1:58946 accepted tcp:appsgenaiserver-pa.clients6.google.com:443 [socks_ipv4 -> proxy]",
+			wantOk:  true,
+			wantSrc: "tcp:127.0.0.1:58946",
+			wantDst: "tcp:appsgenaiserver-pa.clients6.google.com:443",
+			wantDet: "socks_ipv4 -> proxy",
+		},
+		{
+			name:    "without timestamp",
+			line:    "from tcp:127.0.0.1:58946 accepted tcp:claude.ai:443 [socks_ipv4 -> proxy]",
+			wantOk:  true,
+			wantSrc: "tcp:127.0.0.1:58946",
+			wantDst: "tcp:claude.ai:443",
+			wantDet: "socks_ipv4 -> proxy",
+		},
+		{
+			name:    "no detour",
+			line:    "from 192.168.1.1:1234 accepted tcp:example.com:80",
+			wantOk:  true,
+			wantSrc: "192.168.1.1:1234",
+			wantDst: "tcp:example.com:80",
+			wantDet: "",
+		},
+		{
+			name:   "rejected connection",
+			line:   "from 192.168.1.1:1234 rejected tcp:example.com:80",
+			wantOk: false,
+		},
+		{
+			name:   "non access log",
+			line:   "2026/11/08 11:03:55 [Warning] some core warning",
+			wantOk: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			evt, ok := parseAccessLogLine(tc.line)
+			if ok != tc.wantOk {
+				t.Fatalf("parseAccessLogLine() ok = %v, want %v", ok, tc.wantOk)
+			}
+			if tc.wantOk {
+				if evt.Source != tc.wantSrc || evt.Destination != tc.wantDst || evt.Detour != tc.wantDet {
+					t.Fatalf("parsed = %+v, want src=%q dst=%q det=%q", evt, tc.wantSrc, tc.wantDst, tc.wantDet)
+				}
+			}
+		})
+	}
 }
 
 func TestRecordCoreAccessExcludesGstaticProbe(t *testing.T) {
