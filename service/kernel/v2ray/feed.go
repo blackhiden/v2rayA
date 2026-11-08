@@ -44,7 +44,7 @@ func (s *Feed) SubscribeMessage(product string) (box *Box) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.boxes[product]; !ok {
-		return nil
+		s.boxes[product] = nil
 	}
 	messages := make(chan Message, s.boxSize)
 	s.boxes[product] = append(s.boxes[product], &messages)
