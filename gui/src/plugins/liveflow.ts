@@ -11,13 +11,18 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeEndpoint(value: unknown): FlowEndpoint | null {
-  if (!isObject(value) || typeof value.ip !== "string" || !value.ip) {
+  if (!isObject(value)) {
+    return null;
+  }
+  const ip = typeof value.ip === "string" ? value.ip : "";
+  const domain = typeof value.domain === "string" ? value.domain : "";
+  if (!ip && !domain) {
     return null;
   }
   return {
-    ip: value.ip,
+    ip: ip || domain,
     port: typeof value.port === "number" ? value.port : 0,
-    domain: typeof value.domain === "string" ? value.domain : "",
+    domain: domain || ip,
   };
 }
 

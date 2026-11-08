@@ -113,6 +113,9 @@ var (
 // GetLiveFlowProducer returns the singleton route-event producer.
 func GetLiveFlowProducer() *LiveFlowProducer {
 	liveFlowOnce.Do(func() {
+		if ApiFeed != nil {
+			ApiFeed.RegisterProduct(LiveFlowProduct)
+		}
 		liveFlowProducer = &LiveFlowProducer{
 			feed:     ApiFeed,
 			sessions: make(map[string]*LiveFlowSession),

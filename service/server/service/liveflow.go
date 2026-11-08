@@ -211,6 +211,10 @@ func (h *LiveFlowHandler) subscribeToLiveFlowFeed() bool {
 	producer := v2ray.GetLiveFlowProducer()
 	producer.Start()
 
+	if v2ray.ApiFeed != nil {
+		v2ray.ApiFeed.RegisterProduct(v2ray.LiveFlowProduct)
+	}
+
 	box := v2ray.ApiFeed.SubscribeMessage(v2ray.LiveFlowProduct)
 	if box == nil {
 		log.Error("LiveFlow: failed to subscribe to live-flow feed")

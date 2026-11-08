@@ -50,6 +50,7 @@ func init() {
 	for _, product := range ApiProducts {
 		ApiFeed.RegisterProduct(product)
 	}
+	ApiFeed.RegisterProduct(LiveFlowProduct)
 }
 
 type ObservatoryResp struct {
