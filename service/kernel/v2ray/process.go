@@ -296,6 +296,9 @@ func StartCoreProcess(ctx context.Context) (*os.Process, error) {
 		}
 	}
 
+	// Enable Live Flow route event emission
+	env = append(env, "V2RAYA_LIVE_FLOW=1")
+
 	log.Debug(strings.Join(arguments, " "))
 	proc, err := RunWithLog(ctx, v2rayBinPath, arguments, dir, env)
 	if err != nil {
