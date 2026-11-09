@@ -175,41 +175,59 @@ cd service && go test -v -run ".*Active.*|.*Outbound.*" ./db/configure ./kernel/
 
 ---
 
-### Feature 3: Live Flow Real-Time Topology Visualization
+### Feature 3: Live Flow Real-Time Topology Visualization & Event Pipeline
 
 #### Description & Rationale
 Live Flow provides an interactive, animated SVG diagram displaying active traffic paths:
 `source → selected proxy / proxy chain → destination`.
 It operates via real-time WebSocket feeds and line-buffered stdout route events from the core process without adding external runtimes (such as React Flow). Subdomains are grouped under root registrable domains to prevent canvas clutter, and internal latency probes (`gstatic.com:443`) are filtered out.
 
+The pipeline is dual-channel and resilient:
+1. **Core Emitter (`core/main/liveflow.go`):** When `V2RAYA_LIVE_FLOW=1` is passed to `v2raya_core`, logger handler creators intercept accepted `AccessMessage` instances from Xray and output structured JSON lines (`V2RAYA_LIVE_FLOW {...}`) to stdout.
+2. **Universal Access-Log Fallback (`service/kernel/v2ray/liveflow.go`):** In addition to private IPC events, `ConsumeCoreLiveFlowEvent()` parses standard Xray access logs (`from <source> accepted <destination> [<detour>]`). This guarantees real-time traffic tracking across all core deployments (bundled, external, Docker) even if private IPC hooks are absent.
+3. **Resilient Pub-Sub Broker (`service/kernel/v2ray/feed.go` & `api.go`):** `ApiFeed` registers `LiveFlowProduct` (`"live_flow"`), and `Feed.SubscribeMessage()` / `Feed.ProductMessage()` automatically register unknown products on first use instead of returning `nil`, preventing dropped subscriptions.
+4. **Interactive SVG Graphic Canvas (`gui/src/views/LiveFlowView.vue`):** Interactive SVG graphic topology canvas (`viewBox="0 0 1200 height"`) rendered with cubic Bezier paths, animated dashes, route status markers (`active`, `idle`, `error`), registrable root-domain aggregation, and inspection modals (Route Details, Subdomains, Ports), plus a view-toggle between Topology Canvas and Session Table.
+5. **Robust Endpoint Normalization (`gui/src/plugins/liveflow.ts`):** Client normalizes endpoints having either IP or domain without discarding valid routes.
+
 #### Key Implementation Files
-- `core/xray/app/log/log.go`:
-  - Structured route event emitter activated via environment variable `V2RAYA_LIVE_FLOW=1`.
+- `core/main/liveflow.go` & `core/main/liveflow_test.go`:
+  - Structured route event emitter using Xray's `xlog.RegisterHandlerCreator` for `LogType_Console`, `LogType_File`, and `LogType_None`, activated via `V2RAYA_LIVE_FLOW=1`.
 - `service/kernel/v2ray/process.go`:
+  - Sets `V2RAYA_LIVE_FLOW=1` in `StartCoreProcess()`.
   - Line-buffered stdout scanner inspecting core output for route events, invoking `ConsumeCoreLiveFlowEvent()`.
-- `service/kernel/v2ray/liveflow.go` & `liveflow_test.go`:
-  - Parses route events, strips port/trailing dot, filters destination `gstatic.com:443`, aggregates subdomains by registrable domain, resolves outbound server tags, and publishes events to `ApiFeed("live_flow")`.
+- `service/kernel/v2ray/liveflow.go` & `service/kernel/v2ray/liveflow_test.go`:
+  - Parses private route events (`V2RAYA_LIVE_FLOW `).
+  - Fallback parser `parseAccessLogLine()` extracting routes from standard Xray access logs.
+  - Strips port/trailing dot, filters probe `gstatic.com:443`, aggregates subdomains by registrable domain, resolves outbound server tags (trimming brackets `[socks_ipv4 -> proxy]`), and publishes events to `ApiFeed("live_flow")`.
+- `service/kernel/v2ray/api.go`:
+  - Registers `LiveFlowProduct` on `ApiFeed` during `init()`.
+- `service/kernel/v2ray/feed.go` & `service/kernel/v2ray/feed_test.go`:
+  - Auto-registers products in `SubscribeMessage()` and `ProductMessage()` to prevent `nil` subscription boxes.
 - `service/server/service/liveflow.go` & `service/server/controller/liveflow.go`:
-  - Bridges `ApiFeed("live_flow")` to `/api/live-flow` WebSockets with token-bucket rate limiting and JWT validation.
+  - Subscribes to `ApiFeed("live_flow")`, sends initial `batch_state` snapshot, and bridges events to `/api/live-flow` WebSockets with token-bucket rate limiting and JWT validation.
 - `service/server/router/index.go`:
   - Registers `/api/live-flow` WebSocket handler.
-- `gui/src/components/liveFlowDashboard.vue`:
-  - Dependency-free SVG topology renderer with animated directed edges, dark theme, and node selection inspector.
-- `gui/src/plugins/liveflow.js`:
-  - Client WebSocket protocol and state manager.
+- `gui/src/views/LiveFlowView.vue`:
+  - Interactive SVG topology canvas with directed Bezier paths, root domain aggregation, inspector dialogs, and Topology/Table toggle, styled with Material 3 CSS variables (`rgb(var(--v-theme-*))`).
+- `gui/src/plugins/liveflow.ts`:
+  - Client WebSocket protocol, exponential-backoff reconnect, and endpoint normalization (supporting IP and domain).
 
 #### Merge Vulnerability & Protection Strategy
-- **Upstream Hazard:** Upstream does not have Live Flow. Upstream upgrades to `core/` (Xray) or `service/kernel/v2ray/process.go` can overwrite the stdout scanner, drop `ConsumeCoreLiveFlowEvent`, or remove the `/api/live-flow` route in `router/index.go`.
+- **Upstream Hazard:** Upstream does not have Live Flow. Upstream upgrades to `core/` (Xray) or `service/kernel/v2ray/process.go` can overwrite the stdout scanner, drop `ConsumeCoreLiveFlowEvent`, omit `V2RAYA_LIVE_FLOW=1` in `StartCoreProcess()`, overwrite `Feed.SubscribeMessage()`, or remove the `/api/live-flow` route in `router/index.go`. Upstream GUI upgrades may overwrite `gui/src/views/LiveFlowView.vue`.
 - **Resolution Strategy:**
-  1. Verify `service/kernel/v2ray/process.go` retains the live flow stdout scanner and hook.
-  2. Preserve `service/kernel/v2ray/liveflow.go` and its probe exclusion / domain aggregation logic.
-  3. Ensure `service/server/router/index.go` includes `/api/live-flow`.
-  4. Preserve `gui/src/components/liveFlowDashboard.vue` and `gui/src/plugins/liveflow.js`.
+  1. Verify `service/kernel/v2ray/process.go` retains `env = append(env, "V2RAYA_LIVE_FLOW=1")` and the `ConsumeCoreLiveFlowEvent(line)` hook in `handleLine()`.
+  2. Preserve `core/main/liveflow.go` and `core/main/liveflow_test.go`.
+  3. Preserve `service/kernel/v2ray/liveflow.go` including `parseAccessLogLine()` fallback, probe exclusion, and domain aggregation logic.
+  4. Preserve `ApiFeed.RegisterProduct(LiveFlowProduct)` in `api.go` and auto-registration in `service/kernel/v2ray/feed.go`.
+  5. Ensure `service/server/router/index.go` includes `auth.GET("live-flow", controller.GetLiveFlow)`.
+  6. Preserve `gui/src/views/LiveFlowView.vue` and `gui/src/plugins/liveflow.ts`.
 
 #### Verification
 ```bash
-cd service && go test -v ./kernel/v2ray -run "TestLiveFlow.*"
+cd core && go test ./main -v
+cd service && go test -v ./kernel/v2ray -run "TestConsumeCoreLiveFlow|TestParseAccessLogLine|TestParseLiveFlow|TestSelectedDetour|TestRecordCoreAccess|TestFeedAutoRegistersProduct|TestApiFeedRegistersLiveFlowProduct"
 cd service && go test -v ./server/service ./server/controller -run "TestLiveFlow.*"
+cd gui && yarn typecheck && yarn i18n-check && yarn test && yarn build
 ```
 
 ---
@@ -360,14 +378,19 @@ Local Docker builds dynamically inject semantic version, commit short hash, and 
 | `service/kernel/v2ray/template_outbound.go` | Load Balancing | Retain `『group』_0..N` outbounds and selector outbound |
 | `service/kernel/v2ray/template_routing.go` | Load Balancing & Active Outbound | Preserve `setGroupRouting()` and `GetActiveProxyOutboundName()` resolution |
 | `service/kernel/v2ray/template_api.go` | Load Balancing | Retain empty selector check and `extractGroupName()` fallback |
-| `service/kernel/v2ray/process.go` | Live Flow | Retain line-buffered scanner and `ConsumeCoreLiveFlowEvent` call |
-| `service/kernel/v2ray/liveflow.go` | Live Flow | Keep entire file; handle imports if Xray packages changed |
+| `service/kernel/v2ray/process.go` | Live Flow | Retain line-buffered scanner, `ConsumeCoreLiveFlowEvent` call, and `V2RAYA_LIVE_FLOW=1` env var |
+| `service/kernel/v2ray/liveflow.go` | Live Flow | Keep entire file; retain `parseAccessLogLine()` fallback, probe exclusion, domain aggregation, and bracket normalization |
+| `service/kernel/v2ray/api.go` | Live Flow | Preserve `ApiFeed.RegisterProduct(LiveFlowProduct)` |
+| `service/kernel/v2ray/feed.go` | Live Flow | Preserve auto-registration in `SubscribeMessage()` and `ProductMessage()` |
+| `core/main/liveflow.go` | Live Flow | Keep entire file; Xray logger handler creator hook emitting route events to stdout |
 | `service/kernel/serverObj/v2ray.go` | Server Eligibility | Retain `DisableReason()` rule for VMess (keep VLESS+TLS allowed) |
 | `service/server/controller/outbound.go` | Active Group & Bulk Remove | Preserve `SetActiveOutbound`, `GetOutbounds` enhancements, and `PostBulkRemoveByLatency` |
+| `service/server/service/liveflow.go` | Live Flow | Keep entire file; subscribe to `LiveFlowProduct`, send initial `batch_state`, forward live-flow feed |
 | `service/server/router/index.go` | Active Group, Live Flow & Bulk Remove | Preserve `PUT /api/outbound/active`, `GET /api/live-flow`, and `POST /api/bulkRemoveByLatency` |
 | `gui/src/node.vue` | Active Group, Bulk Add/Remove, Server Filters | Preserve **PROXY GROUP** tab, separate filter boxes, bulk latency action buttons, and tab scoping |
 | `gui/src/components/ProxyGroupPanel.vue` | Active Group Selection | Keep entire file |
-| `gui/src/components/liveFlowDashboard.vue` | Live Flow Topology | Keep entire file |
+| `gui/src/views/LiveFlowView.vue` | Live Flow Topology | Keep entire file; preserve interactive SVG graphic canvas, Bezier paths, root domain aggregation, and Topology/Table toggle |
+| `gui/src/plugins/liveflow.ts` | Live Flow Client | Keep entire file; endpoint normalization (ip/domain) and reconnect logic |
 | `gui/src/components/modalBulkAddByLatency.vue` | Bulk Add by Latency | Keep entire file; verify multi-subscription retention in `confirm()` |
 | `gui/src/components/modalBulkRemoveByLatency.vue` | Bulk Remove by Latency | Keep entire file; verify safety guard against emptying groups |
 | `.gitignore` | Local Dev Persistence | Preserve dedicated local development persistence block |
